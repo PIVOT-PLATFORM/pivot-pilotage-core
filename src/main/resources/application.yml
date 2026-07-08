@@ -21,6 +21,11 @@ spring:
 
   flyway:
     enabled: true
+    # create-schemas (defaut Flyway: true) cree le schema "pilotage" avant la 1ere migration —
+    # sans schemas/default-schema explicites, Flyway retombe sur le schema par defaut de la
+    # connexion (public) et entre en collision avec flyway_schema_history de pivot-core.
+    schemas: pilotage
+    default-schema: pilotage
     locations: classpath:db/migration
     baseline-on-migrate: true
     baseline-version: 0
