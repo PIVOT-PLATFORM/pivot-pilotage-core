@@ -42,7 +42,9 @@ spring:
 server:
   port: ${SERVER_PORT:8081}
   servlet:
-    context-path: /api
+    # nginx (pivot-ui/nginx.conf) proxy_pass sans réécriture de préfixe : /api/pilotage/**
+    # doit être servi tel quel côté JVM — voir pattern identique sur pivot-collaboratif-core.
+    context-path: /api/pilotage
 
 management:
   endpoints:
