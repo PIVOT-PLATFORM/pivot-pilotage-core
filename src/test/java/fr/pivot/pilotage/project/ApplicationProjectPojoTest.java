@@ -20,7 +20,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class ApplicationProjectPojoTest {
 
     private static final Long TENANT_ID = 42L;
-    private static final Instant NOW = Instant.parse("2026-07-11T10:15:30Z");
+    private static final Instant NOW = Instant.parse("2020-01-01T00:00:00Z");
 
     @Test
     void applicationFullConstructorInitializesAllFields() {
