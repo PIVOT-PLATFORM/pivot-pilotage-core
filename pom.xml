@@ -232,12 +232,20 @@
 								<id>report</id>
 								<phase>verify</phase>
 								<goals><goal>report</goal></goals>
+								<configuration>
+									<excludes>
+										<exclude>fr/pivot/pilotage/*Application.class</exclude>
+									</excludes>
+								</configuration>
 							</execution>
 							<execution>
 								<id>check</id>
 								<phase>verify</phase>
 								<goals><goal>check</goal></goals>
 								<configuration>
+									<excludes>
+										<exclude>fr/pivot/pilotage/*Application.class</exclude>
+									</excludes>
 									<rules>
 										<rule>
 											<element>BUNDLE</element>
