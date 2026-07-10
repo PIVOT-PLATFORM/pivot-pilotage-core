@@ -21,6 +21,10 @@
         <Or>
             <!-- EN18.1 — Application / Project : entités JPA du socle Pilotage. -->
             <Package name="fr.pivot.pilotage.project"/>
+            <!-- EN22.1a — schéma temporel : entités JPA schedule (Calendar, Task, Phase,
+                 dépendances, contraintes, assignations, avancement) et baseline. -->
+            <Package name="fr.pivot.pilotage.schedule"/>
+            <Package name="fr.pivot.pilotage.baseline"/>
         </Or>
     </Match>
 
