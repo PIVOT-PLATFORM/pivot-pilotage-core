@@ -12,6 +12,8 @@ import jakarta.persistence.PreUpdate;
 import jakarta.persistence.Table;
 
 import java.time.Instant;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 /**
  * JPA entity representing a working-time {@code calendar} (EN22.1a, frozen contract §a).
@@ -53,6 +55,7 @@ public class Calendar {
     private Short workingDaysMask;
 
     /** Working time ranges per day, stored as JSONB. */
+    @JdbcTypeCode(SqlTypes.JSON)
     @Column(name = "working_time", columnDefinition = "jsonb", nullable = false)
     private String workingTime;
 

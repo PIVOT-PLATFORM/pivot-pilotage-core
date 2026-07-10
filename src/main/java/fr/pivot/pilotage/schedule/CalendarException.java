@@ -11,6 +11,8 @@ import jakarta.persistence.Table;
 
 import java.time.Instant;
 import java.time.LocalDate;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 /**
  * JPA entity representing a {@code calendar_exception} (EN22.1a, frozen contract §a) — a
@@ -45,6 +47,7 @@ public class CalendarException {
     private Boolean working;
 
     /** Specific working-time ranges as JSONB, when {@code isWorking}; may be {@code null}. */
+    @JdbcTypeCode(SqlTypes.JSON)
     @Column(name = "working_time", columnDefinition = "jsonb")
     private String workingTime;
 
