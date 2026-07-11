@@ -23,6 +23,6 @@ public record UpdateDependencyRequest(
 
     /** Canonical constructor applying the zero-lag default so downstream code never sees a null lag. */
     public UpdateDependencyRequest {
-        lagMinutes = lagMinutes == null ? 0 : lagMinutes;
+        lagMinutes = lagMinutes == null ? Integer.valueOf(0) : lagMinutes;
     }
 }

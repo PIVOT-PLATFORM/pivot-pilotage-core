@@ -32,6 +32,6 @@ public record CreateDependencyRequest(
      */
     public CreateDependencyRequest {
         linkType = linkType == null ? DependencyLinkType.FS : linkType;
-        lagMinutes = lagMinutes == null ? 0 : lagMinutes;
+        lagMinutes = lagMinutes == null ? Integer.valueOf(0) : lagMinutes;
     }
 }
