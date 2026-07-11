@@ -442,3 +442,54 @@ CREATE INDEX IF NOT EXISTS idx_organization_profile_tenant_id
     ON pilotage.organization_profile(tenant_id);
 CREATE INDEX IF NOT EXISTS idx_organization_profile_team_id
     ON pilotage.organization_profile(team_id);
+
+-- =====================================================================================
+-- US22.3.1 — Roadmap rapide : lanes (theme / equipe / objectif).
+--
+-- Concept introduit par cette US (Gate 1 backlog sous-specifie niveau technique -- decision
+-- PO Agent + Architecte consignee ici, dans le contrat REST et dans le fichier backlog
+-- pivot-docs, section "Notes d'implementation") : une "lane" est un regroupement HORIZONTAL et
+-- PLAT (pas de hierarchie) de la roadmap macro -- un theme, une equipe ou un objectif, au choix
+-- de l'utilisateur (aucune taxonomie figee cote schema : name est un libelle libre, pas
+-- d'enum/colonne "kind"). Distincte de pilotage.phase (regroupement macro adosse a une tache
+-- recapitulative racine, axe temps/WBS, EN22.1a) : une lane est un axe ORTHOGONAL au temps,
+-- jamais adossee a une tache -- les deux concepts coexistent sans se substituer l'un a l'autre.
+--
+-- Conforme a la note d'implementation du backlog ("l'initiative creee ici est une vue macro
+-- posee sur le meme graphe temporel que le Gantt (EN22.1) -- pas d'entite separee ni de double
+-- saisie") : une "initiative" reste un pilotage.task existant (node_kind LEAF, shared_in_roadmap
+-- true), jamais une nouvelle table d'entite "initiative" -- seule la colonne task.lane_id
+-- ci-dessous est ajoutee pour l'y rattacher.
+--
+-- task.lane_id est NULLABLE : seules les taches creees via le flux "roadmap rapide" (US22.3.1)
+-- portent une lane ; les taches Gantt detaillees (EN22.1a/b) n'en ont pas besoin. Aucun
+-- ON DELETE explicite -> comportement par defaut Postgres (NO ACTION) : supprimer une lane qui
+-- porte encore des initiatives est refuse -- aucune US de suppression de lane n'est specifiee a
+-- ce stade (hors perimetre US22.3.1, cf. fichier backlog).
+--
+-- UNIQUE (project_id, name) : deux lanes du meme libelle dans le meme projet seraient une
+-- ambiguite pour l'utilisateur (quelle lane recoit l'initiative ?) -- rejetee 409 cote service
+-- (DuplicateLaneNameException), pas une erreur silencieuse.
+--
+-- tenant_id/team_id dupliques sur lane, meme principe de duplication deliberee que toutes les
+-- autres tables pilotage.* de ce fichier (filtrage direct sans jointure systematique).
+-- =====================================================================================
+CREATE TABLE IF NOT EXISTS pilotage.lane (
+    id         BIGINT       GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    tenant_id  BIGINT       NOT NULL REFERENCES public.tenants(id),
+    team_id    BIGINT       NOT NULL REFERENCES public.teams(id),
+    project_id BIGINT       NOT NULL REFERENCES pilotage.project(id) ON DELETE CASCADE,
+    name       VARCHAR(255) NOT NULL,
+    position   INT          NOT NULL,
+    created_at TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    CONSTRAINT uq_lane_project_name UNIQUE (project_id, name)
+);
+CREATE INDEX IF NOT EXISTS idx_lane_tenant_id  ON pilotage.lane(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_lane_team_id    ON pilotage.lane(team_id);
+CREATE INDEX IF NOT EXISTS idx_lane_project_id ON pilotage.lane(project_id);
+
+-- Rattachement task -> lane (roadmap-rapide uniquement, NULLABLE), ajoute maintenant que lane existe.
+ALTER TABLE pilotage.task
+    ADD COLUMN IF NOT EXISTS lane_id BIGINT REFERENCES pilotage.lane(id);
+CREATE INDEX IF NOT EXISTS idx_task_lane_id ON pilotage.task(lane_id);

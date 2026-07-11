@@ -104,6 +104,7 @@ class SchedulePojoTest {
 
         // derived / nullable fields default to null
         assertThat(task.getPhaseId()).isNull();
+        assertThat(task.getLaneId()).isNull();
         assertThat(task.getParentTaskId()).isNull();
         assertThat(task.getWbsCode()).isNull();
         assertThat(task.getStartDate()).isNull();
@@ -124,6 +125,7 @@ class SchedulePojoTest {
         assertThat(task.getHorizon()).isNull();
 
         task.setPhaseId(11L);
+        task.setLaneId(21L);
         task.setParentTaskId(12L);
         task.setPosition(2);
         task.setName("Build");
@@ -142,6 +144,7 @@ class SchedulePojoTest {
         task.setRevision(1);
 
         assertThat(task.getPhaseId()).isEqualTo(11L);
+        assertThat(task.getLaneId()).isEqualTo(21L);
         assertThat(task.getParentTaskId()).isEqualTo(12L);
         assertThat(task.getPosition()).isEqualTo(2);
         assertThat(task.getName()).isEqualTo("Build");

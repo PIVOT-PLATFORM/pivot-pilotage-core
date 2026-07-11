@@ -70,4 +70,39 @@ public interface TaskRepository extends JpaRepository<Task, Long> {
      * @return an {@link Optional} with the task, or empty if not found for that tenant/team
      */
     Optional<Task> findByIdAndTenantIdAndTeamId(Long id, Long tenantId, Long teamId);
+
+    /**
+     * Finds a task by id, verifying it belongs to the given project, tenant and team (US22.3.1
+     * roadmap-rapide initiative lookup — the initiative must resolve within the exact project the
+     * caller is browsing, not merely somewhere in the tenant/team).
+     *
+     * @param id        the task id
+     * @param projectId the expected owning {@code pilotage.project.id}
+     * @param tenantId  the expected tenant's {@code public.tenants.id}
+     * @param teamId    the expected team's {@code public.teams.id}
+     * @return an {@link Optional} with the task, or empty if not found for that project/tenant/team
+     */
+    Optional<Task> findByIdAndProjectIdAndTenantIdAndTeamId(Long id, Long projectId, Long tenantId, Long teamId);
+
+    /**
+     * Finds all roadmap-rapide initiatives (tasks assigned to a lane, US22.3.1) of the given
+     * project within the given tenant and team.
+     *
+     * @param projectId the parent {@code pilotage.project.id}
+     * @param tenantId  the {@code public.tenants.id} to restrict results to
+     * @param teamId    the {@code public.teams.id} to restrict results to
+     * @return the lane-assigned tasks (possibly empty)
+     */
+    List<Task> findAllByProjectIdAndTenantIdAndTeamIdAndLaneIdIsNotNull(Long projectId, Long tenantId, Long teamId);
+
+    /**
+     * Counts the roadmap-rapide initiatives already posed on the given lane (US22.3.1) — used to
+     * append a newly created initiative at the end of its lane's display order.
+     *
+     * @param laneId   the {@code pilotage.lane.id}
+     * @param tenantId the {@code public.tenants.id} to restrict results to
+     * @param teamId   the {@code public.teams.id} to restrict results to
+     * @return the number of initiatives currently on that lane
+     */
+    long countByLaneIdAndTenantIdAndTeamId(Long laneId, Long tenantId, Long teamId);
 }

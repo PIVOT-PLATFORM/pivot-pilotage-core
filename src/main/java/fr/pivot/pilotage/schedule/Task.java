@@ -55,6 +55,15 @@ public class Task {
     @Column(name = "phase_id")
     private Long phaseId;
 
+    /**
+     * Roadmap-rapide lane id (US22.3.1, FK {@code pilotage.lane(id)}); {@code null} for a regular
+     * Gantt task never posed on a roadmap-rapide lane. Distinct from {@link #phaseId}: a lane is a
+     * flat, orthogonal-to-time grouping (theme/team/objective), never adossed to a task, whereas a
+     * phase is a time/WBS macro-grouping optionally backed by a root summary task.
+     */
+    @Column(name = "lane_id")
+    private Long laneId;
+
     /** WBS parent task id (self-reference); {@code null} at the WBS root. */
     @Column(name = "parent_task_id")
     private Long parentTaskId;
@@ -292,6 +301,24 @@ public class Task {
      */
     public void setParentTaskId(final Long parentTaskId) {
         this.parentTaskId = parentTaskId;
+    }
+
+    /**
+     * Returns the roadmap-rapide lane id (US22.3.1).
+     *
+     * @return the lane id, or {@code null} if this task is not a roadmap-rapide initiative
+     */
+    public Long getLaneId() {
+        return laneId;
+    }
+
+    /**
+     * Sets the roadmap-rapide lane id (US22.3.1).
+     *
+     * @param laneId the lane id (may be {@code null})
+     */
+    public void setLaneId(final Long laneId) {
+        this.laneId = laneId;
     }
 
     /**
