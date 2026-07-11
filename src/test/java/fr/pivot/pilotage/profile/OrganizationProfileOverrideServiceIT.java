@@ -109,7 +109,9 @@ class OrganizationProfileOverrideServiceIT {
                 SovereigntyClass.ZONE_A_SOUVERAINE, RigorLevel.STRICT, Set.of("roadmap", "gantt")));
 
         // Still exactly one row for the tenant (UNIQUE tenant_id) — replaced, not duplicated.
-        assertThat(profileRepository.findAll()).hasSize(1);
+        // findByTenantId returning via orElseThrow (rather than an IncorrectResultSizeDataAccessException)
+        // already proves at most one row matches; other test methods share this Testcontainers
+        // database without rollback, so an unscoped findAll() would see their rows too.
         final OrganizationProfile reloaded = profileRepository.findByTenantId(tenantId).orElseThrow();
         assertThat(reloaded.getTeamId()).isEqualTo(teamB);
         assertThat(reloaded.getAltitude()).isEqualTo(Altitude.DETAIL);
@@ -126,7 +128,9 @@ class OrganizationProfileOverrideServiceIT {
         assertThatExceptionOfType(TenantNotFoundException.class).isThrownBy(() ->
                 overrideService.upsertOverride(unknownTenantId, request(teamId, Altitude.MACRO,
                         SovereigntyClass.ZONE_B_CONTROLEE, RigorLevel.STANDARD, Set.of("roadmap"))));
-        assertThat(profileRepository.findAll()).isEmpty();
+        // No phantom row written for the unknown tenant — tenant-scoped, other test methods in
+        // this class share the Testcontainers database without rollback between tests.
+        assertThat(profileRepository.findByTenantId(unknownTenantId)).isEmpty();
     }
 
     // -------- AC (security): a team belonging to a different tenant → TeamNotFoundException ------
