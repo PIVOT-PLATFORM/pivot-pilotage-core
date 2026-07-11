@@ -46,6 +46,18 @@
     </Match>
 
     <!--
+        EI_EXPOSE_REP2 sur le contrôleur Calendriers (US22.4.5) : stocke des beans Spring singleton
+        constructeur-injectés (CalendarService, CalendarEditPolicy) — état géré par le conteneur, non
+        mutable de l'extérieur ; en faire une copie défensive n'aurait aucun sens. Décision de
+        conception (composant Spring), pas un bug. Les DTOs/records du package calendar prennent des
+        copies défensives (List.copyOf) et restent couverts par le check hors de cette exclusion.
+    -->
+    <Match>
+        <Bug pattern="EI_EXPOSE_REP,EI_EXPOSE_REP2"/>
+        <Class name="fr.pivot.pilotage.calendar.CalendarController"/>
+    </Match>
+
+    <!--
         NM_CLASS_NOT_EXCEPTION : l'entité JPA `CalendarException` modélise un jour dérogatoire
         de calendrier (férié / ouvré exceptionnel), pas une exception Java. Le nom est un terme
         métier (table `pilotage.calendar_exception`), pas une erreur de conception.
