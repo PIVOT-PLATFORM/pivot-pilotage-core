@@ -23,6 +23,16 @@ public interface ProjectRepository extends JpaRepository<Project, Long> {
     List<Project> findAllByTenantId(Long tenantId);
 
     /**
+     * Finds all projects belonging to the given tenant and team (per-team portfolio scoping,
+     * team_id retrofit).
+     *
+     * @param tenantId the {@code public.tenants.id} to restrict results to
+     * @param teamId   the {@code public.teams.id} to restrict results to
+     * @return the projects owned by that tenant/team (possibly empty)
+     */
+    List<Project> findAllByTenantIdAndTeamId(Long tenantId, Long teamId);
+
+    /**
      * Finds all projects attached to the given application.
      *
      * @param applicationId the parent {@code pilotage.application.id}
@@ -42,6 +52,17 @@ public interface ProjectRepository extends JpaRepository<Project, Long> {
     List<Project> findAllByApplicationIdAndTenantId(Long applicationId, Long tenantId);
 
     /**
+     * Finds all projects of the given application within the given tenant and team (per-team
+     * portfolio scoping, team_id retrofit).
+     *
+     * @param applicationId the parent {@code pilotage.application.id}
+     * @param tenantId      the {@code public.tenants.id} to restrict results to
+     * @param teamId        the {@code public.teams.id} to restrict results to
+     * @return the projects (possibly empty)
+     */
+    List<Project> findAllByApplicationIdAndTenantIdAndTeamId(Long applicationId, Long tenantId, Long teamId);
+
+    /**
      * Finds a project by its identifier, verifying it belongs to the given tenant.
      *
      * <p>Returns {@link Optional#empty()} if the project does not exist or belongs to a
@@ -52,4 +73,15 @@ public interface ProjectRepository extends JpaRepository<Project, Long> {
      * @return an {@link Optional} containing the project, or empty if not found
      */
     Optional<Project> findByIdAndTenantId(Long id, Long tenantId);
+
+    /**
+     * Finds a project by its identifier, verifying it belongs to the given tenant and team
+     * (per-team portfolio scoping, team_id retrofit).
+     *
+     * @param id       the project id
+     * @param tenantId the expected tenant's {@code public.tenants.id}
+     * @param teamId   the expected team's {@code public.teams.id}
+     * @return an {@link Optional} containing the project, or empty if not found
+     */
+    Optional<Project> findByIdAndTenantIdAndTeamId(Long id, Long tenantId, Long teamId);
 }

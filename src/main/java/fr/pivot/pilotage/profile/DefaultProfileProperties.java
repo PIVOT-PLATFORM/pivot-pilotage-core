@@ -13,11 +13,14 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  * {@code pilotage.organization_profile}.
  *
  * <p>Bound from the {@code pivot.profile.default.*} configuration namespace with hard-coded,
- * documented defaults matching the fiche's proposed values (to be confirmed by the maintainer):
- * altitude = {@link Altitude#MACRO} (fast/macro roadmap — same value the temporary
+ * documented defaults matching the fiche's proposed values (confirmed by the maintainer,
+ * 2026-07-11): altitude = {@link Altitude#MACRO} (fast/macro roadmap — same value the temporary
  * {@code FixedDefaultAltitudeProvider} returns, preserving the projection contract), sovereignty =
- * {@link SovereigntyClass#NEUTRAL} (most neutral), rigor = {@link RigorLevel#STANDARD}, modules =
- * the minimal roadmap socle.
+ * {@link SovereigntyClass#ZONE_B_CONTROLEE} (ADR-015 zone B — contrôlée; "the most neutral class"
+ * maps to standard controlled SaaS operation, not zone A — disproportionately restrictive as a
+ * universal default — nor zone C — reserved for explicit third-party/DMZ exposure; see
+ * {@link SovereigntyClass} Javadoc), rigor = {@link RigorLevel#STANDARD}, modules = the minimal
+ * roadmap socle.
  *
  * <p>"Versioned" means: the default is code/config, resolved on the fly — never a fabricated DB
  * row. It is the substitution point the fiche calls "config versionnée résolue à la volée".
@@ -28,8 +31,8 @@ public class DefaultProfileProperties {
     /** Default view altitude (render cursor opening notch). */
     private Altitude altitude = Altitude.MACRO;
 
-    /** Default sovereignty class. */
-    private SovereigntyClass sovereigntyClass = SovereigntyClass.NEUTRAL;
+    /** Default sovereignty class (ADR-015 zone B — contrôlée; see class Javadoc). */
+    private SovereigntyClass sovereigntyClass = SovereigntyClass.ZONE_B_CONTROLEE;
 
     /** Default rigor level. */
     private RigorLevel rigorLevel = RigorLevel.STANDARD;

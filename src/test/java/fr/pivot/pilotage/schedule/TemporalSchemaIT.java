@@ -101,12 +101,14 @@ class TemporalSchemaIT {
     private JdbcTemplate jdbcTemplate;
 
     private long tenantId;
+    private long teamId;
 
-    /** Seeds a fresh tenant in {@code public.tenants} before each test. */
+    /** Seeds a fresh tenant and team in {@code public.tenants}/{@code public.teams} before each test. */
     @BeforeEach
     void setUp() throws Exception {
         tenantId = PlatformSchemaTestSupport.seedTenant(
                 POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword());
+        teamId = seedTeam(tenantId);
     }
 
     // ---------- helpers -------------------------------------------------------------------
@@ -116,14 +118,20 @@ class TemporalSchemaIT {
                 POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword());
     }
 
-    private Project newProject(final long owner) {
-        final Instant now = Instant.now();
-        final Application app = applicationRepository.save(new Application(owner, "App", now));
-        return projectRepository.save(new Project(app, owner, "Project", now));
+    private long seedTeam(final long owner) throws Exception {
+        return PlatformSchemaTestSupport.seedTeam(
+                POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword(), owner);
     }
 
-    private Task newLeaf(final long owner, final long projectId, final int position, final String name) {
-        return taskRepository.save(new Task(owner, projectId, position, name,
+    private Project newProject(final long owner, final long team) {
+        final Instant now = Instant.now();
+        final Application app = applicationRepository.save(new Application(owner, team, "App", now));
+        return projectRepository.save(new Project(app, owner, team, "Project", now));
+    }
+
+    private Task newLeaf(final long owner, final long team, final long projectId, final int position,
+            final String name) {
+        return taskRepository.save(new Task(owner, team, projectId, position, name,
                 NodeKind.LEAF, false, TemporalPrecision.DAY, 0));
     }
 
@@ -200,6 +208,31 @@ class TemporalSchemaIT {
         }
     }
 
+    /**
+     * AC (security, team_id retrofit): every EN22.1a table also carries a {@code team_id} FK to
+     * {@code public.teams(id)}, mirroring the {@code tenant_id} FK above.
+     */
+    @Test
+    void ac_securite_chaqueTablePorteTeamIdFk() {
+        final List<String> tables = List.of(
+                "phase", "task", "task_dependency", "task_constraint", "calendar",
+                "calendar_exception", "assignment", "task_progress", "baseline", "baseline_snapshot");
+        for (final String table : tables) {
+            final Integer fkCount = jdbcTemplate.queryForObject("""
+                    SELECT COUNT(*)
+                    FROM pg_constraint c
+                    JOIN pg_attribute a
+                      ON a.attrelid = c.conrelid AND a.attnum = ANY (c.conkey)
+                    WHERE c.contype = 'f'
+                      AND c.conrelid = ('pilotage.' || ?)::regclass
+                      AND c.confrelid = 'public.teams'::regclass
+                      AND a.attname = 'team_id'
+                      AND array_length(c.conkey, 1) = 1
+                    """, Integer.class, table);
+            assertThat(fkCount).as("team_id FK on pilotage.%s", table).isEqualTo(1);
+        }
+    }
+
     // ---------- DDL constraints ------------------------------------------------------------
 
     /**
@@ -208,14 +241,14 @@ class TemporalSchemaIT {
      */
     @Test
     void ac_erreur_dependanceDoublonRejetee() {
-        final Project project = newProject(tenantId);
-        final Task t1 = newLeaf(tenantId, project.getId(), 0, "T1");
-        final Task t2 = newLeaf(tenantId, project.getId(), 1, "T2");
+        final Project project = newProject(tenantId, teamId);
+        final Task t1 = newLeaf(tenantId, teamId, project.getId(), 0, "T1");
+        final Task t2 = newLeaf(tenantId, teamId, project.getId(), 1, "T2");
         taskDependencyRepository.saveAndFlush(
-                new TaskDependency(tenantId, t1.getId(), t2.getId(), DependencyLinkType.FS, 0));
+                new TaskDependency(tenantId, teamId, t1.getId(), t2.getId(), DependencyLinkType.FS, 0));
 
         assertThatThrownBy(() -> taskDependencyRepository.saveAndFlush(
-                new TaskDependency(tenantId, t1.getId(), t2.getId(), DependencyLinkType.FS, 0)))
+                new TaskDependency(tenantId, teamId, t1.getId(), t2.getId(), DependencyLinkType.FS, 0)))
                 .isInstanceOf(DataIntegrityViolationException.class);
     }
 
@@ -224,11 +257,11 @@ class TemporalSchemaIT {
      */
     @Test
     void ac_erreur_dependanceSurElleMemeRejetee() {
-        final Project project = newProject(tenantId);
-        final Task t1 = newLeaf(tenantId, project.getId(), 0, "T1");
+        final Project project = newProject(tenantId, teamId);
+        final Task t1 = newLeaf(tenantId, teamId, project.getId(), 0, "T1");
 
         assertThatThrownBy(() -> taskDependencyRepository.saveAndFlush(
-                new TaskDependency(tenantId, t1.getId(), t1.getId(), DependencyLinkType.FS, 0)))
+                new TaskDependency(tenantId, teamId, t1.getId(), t1.getId(), DependencyLinkType.FS, 0)))
                 .isInstanceOf(DataIntegrityViolationException.class);
     }
 
@@ -238,10 +271,10 @@ class TemporalSchemaIT {
      */
     @Test
     void ac_erreur_baselineIndexHorsBorneRejete() {
-        final Project project = newProject(tenantId);
+        final Project project = newProject(tenantId, teamId);
 
         assertThatThrownBy(() -> baselineRepository.saveAndFlush(
-                new Baseline(tenantId, project.getId(), (short) 11, Instant.now())))
+                new Baseline(tenantId, teamId, project.getId(), (short) 11, Instant.now())))
                 .isInstanceOf(DataIntegrityViolationException.class);
     }
 
@@ -251,13 +284,13 @@ class TemporalSchemaIT {
      */
     @Test
     void ac_erreur_contrainteUniqueParTache() {
-        final Project project = newProject(tenantId);
-        final Task t1 = newLeaf(tenantId, project.getId(), 0, "T1");
+        final Project project = newProject(tenantId, teamId);
+        final Task t1 = newLeaf(tenantId, teamId, project.getId(), 0, "T1");
         taskConstraintRepository.saveAndFlush(
-                new TaskConstraint(tenantId, t1.getId(), ConstraintType.ASAP, null, null));
+                new TaskConstraint(tenantId, teamId, t1.getId(), ConstraintType.ASAP, null, null));
 
         assertThatThrownBy(() -> taskConstraintRepository.saveAndFlush(
-                new TaskConstraint(tenantId, t1.getId(), ConstraintType.ALAP, null, null)))
+                new TaskConstraint(tenantId, teamId, t1.getId(), ConstraintType.ALAP, null, null)))
                 .isInstanceOf(DataIntegrityViolationException.class);
     }
 
@@ -267,12 +300,12 @@ class TemporalSchemaIT {
      */
     @Test
     void ac_erreur_progressionUniqueParTache() {
-        final Project project = newProject(tenantId);
-        final Task t1 = newLeaf(tenantId, project.getId(), 0, "T1");
-        taskProgressRepository.saveAndFlush(new TaskProgress(tenantId, t1.getId(), BigDecimal.ZERO));
+        final Project project = newProject(tenantId, teamId);
+        final Task t1 = newLeaf(tenantId, teamId, project.getId(), 0, "T1");
+        taskProgressRepository.saveAndFlush(new TaskProgress(tenantId, teamId, t1.getId(), BigDecimal.ZERO));
 
         assertThatThrownBy(() -> taskProgressRepository.saveAndFlush(
-                new TaskProgress(tenantId, t1.getId(), new BigDecimal("50.00"))))
+                new TaskProgress(tenantId, teamId, t1.getId(), new BigDecimal("50.00"))))
                 .isInstanceOf(DataIntegrityViolationException.class);
     }
 
@@ -282,16 +315,18 @@ class TemporalSchemaIT {
      */
     @Test
     void ac_erreur_fkTenantInconnu() {
-        final Project project = newProject(tenantId);
+        final Project project = newProject(tenantId, teamId);
         final long unknownTenantId = 888_888_888L;
 
+        // team_id is bound to the (valid, seeded) teamId so the failure is isolated to the
+        // unknown tenant_id under test, not a spurious NOT NULL/FK violation on team_id.
         assertThatThrownBy(() ->
                 jdbcTemplate.update(
                         "INSERT INTO pilotage.task "
-                                + "(tenant_id, project_id, position, name, node_kind, "
+                                + "(tenant_id, team_id, project_id, position, name, node_kind, "
                                 + "shared_in_roadmap, temporal_precision, revision) "
-                                + "VALUES (?, ?, 0, 'X', 'LEAF', false, 'DAY', 0)",
-                        unknownTenantId, project.getId()))
+                                + "VALUES (?, ?, ?, 0, 'X', 'LEAF', false, 'DAY', 0)",
+                        unknownTenantId, teamId, project.getId()))
                 .isInstanceOf(DataIntegrityViolationException.class);
     }
 
@@ -305,9 +340,9 @@ class TemporalSchemaIT {
     @Test
     @Transactional
     void ac_jalonPartagePersisteEtRelu() {
-        final Project project = newProject(tenantId);
+        final Project project = newProject(tenantId, teamId);
         final Instant now = Instant.now();
-        final Task milestone = new Task(tenantId, project.getId(), 0, "Jalon",
+        final Task milestone = new Task(tenantId, teamId, project.getId(), 0, "Jalon",
                 NodeKind.MILESTONE, true, TemporalPrecision.DAY, 0);
         milestone.setStartDate(now);
         milestone.setFinishDate(now);
@@ -333,10 +368,10 @@ class TemporalSchemaIT {
     @Test
     @Transactional
     void ac_altitudeEffectiveCoexisteSurLaMemeLigne() {
-        final Project project = newProject(tenantId);
+        final Project project = newProject(tenantId, teamId);
         final java.time.LocalDate qStart = java.time.LocalDate.of(2026, 1, 1);
         final java.time.LocalDate qEnd = java.time.LocalDate.of(2026, 3, 31);
-        final Task task = new Task(tenantId, project.getId(), 0, "Initiative",
+        final Task task = new Task(tenantId, teamId, project.getId(), 0, "Initiative",
                 NodeKind.SUMMARY, true, TemporalPrecision.QUARTER, 0);
         task.setFuzzyPeriodStart(qStart);
         task.setFuzzyPeriodEnd(qEnd);
@@ -361,38 +396,39 @@ class TemporalSchemaIT {
     @Transactional
     void ac_miniGraphePersisteViaRepositories() {
         final Instant now = Instant.now();
-        final Application app = applicationRepository.save(new Application(tenantId, "App", now));
-        final Project project = projectRepository.save(new Project(app, tenantId, "P", now));
+        final Application app = applicationRepository.save(new Application(tenantId, teamId, "App", now));
+        final Project project = projectRepository.save(new Project(app, tenantId, teamId, "P", now));
 
         final Calendar calendar = calendarRepository.save(new Calendar(
-                tenantId, project.getId(), CalendarScope.PROJECT, "Std", (short) 62, "{}"));
+                tenantId, teamId, project.getId(), CalendarScope.PROJECT, "Std", (short) 62, "{}"));
         project.setCalendar(calendar);
         projectRepository.save(project);
 
         final Phase phase = phaseRepository.save(
-                new Phase(tenantId, project.getId(), null, "Build", 0));
+                new Phase(tenantId, teamId, project.getId(), null, "Build", 0));
 
-        final Task summary = newLeaf(tenantId, project.getId(), 0, "Summary");
-        final Task leafA = new Task(tenantId, project.getId(), 1, "A",
+        final Task summary = newLeaf(tenantId, teamId, project.getId(), 0, "Summary");
+        final Task leafA = new Task(tenantId, teamId, project.getId(), 1, "A",
                 NodeKind.LEAF, false, TemporalPrecision.DAY, 0);
         leafA.setPhaseId(phase.getId());
         leafA.setParentTaskId(summary.getId());
         leafA.setDurationMinutes(480);
         final Task savedA = taskRepository.save(leafA);
-        final Task leafB = newLeaf(tenantId, project.getId(), 2, "B");
+        final Task leafB = newLeaf(tenantId, teamId, project.getId(), 2, "B");
 
         taskDependencyRepository.save(
-                new TaskDependency(tenantId, savedA.getId(), leafB.getId(), DependencyLinkType.FS, 0));
+                new TaskDependency(tenantId, teamId, savedA.getId(), leafB.getId(), DependencyLinkType.FS, 0));
         taskConstraintRepository.save(
-                new TaskConstraint(tenantId, savedA.getId(), ConstraintType.SNET, now, null));
+                new TaskConstraint(tenantId, teamId, savedA.getId(), ConstraintType.SNET, now, null));
         assignmentRepository.save(
-                new Assignment(tenantId, savedA.getId(), "user:42", new BigDecimal("100.00")));
-        taskProgressRepository.save(new TaskProgress(tenantId, savedA.getId(), new BigDecimal("25.00")));
+                new Assignment(tenantId, teamId, savedA.getId(), "user:42", new BigDecimal("100.00")));
+        taskProgressRepository.save(
+                new TaskProgress(tenantId, teamId, savedA.getId(), new BigDecimal("25.00")));
 
         final Baseline baseline = baselineRepository.save(
-                new Baseline(tenantId, project.getId(), (short) 0, now));
+                new Baseline(tenantId, teamId, project.getId(), (short) 0, now));
         baselineSnapshotRepository.save(
-                new BaselineSnapshot(tenantId, baseline.getId(), savedA.getId()));
+                new BaselineSnapshot(tenantId, teamId, baseline.getId(), savedA.getId()));
 
         // Read the graph back via tenant-scoped repositories.
         assertThat(calendarRepository.findAllByTenantId(tenantId)).hasSize(1);
@@ -417,20 +453,21 @@ class TemporalSchemaIT {
     @Test
     void ac_securite_isolationMultiTenant() throws Exception {
         final long tenantT2 = seedTenant();
+        final long teamT2 = seedTeam(tenantT2);
 
-        final Project projectT1 = newProject(tenantId);
-        final Task taskT1 = newLeaf(tenantId, projectT1.getId(), 0, "T1-task");
+        final Project projectT1 = newProject(tenantId, teamId);
+        final Task taskT1 = newLeaf(tenantId, teamId, projectT1.getId(), 0, "T1-task");
         calendarRepository.save(new Calendar(
-                tenantId, projectT1.getId(), CalendarScope.PROJECT, "C1", (short) 62, "{}"));
+                tenantId, teamId, projectT1.getId(), CalendarScope.PROJECT, "C1", (short) 62, "{}"));
         assignmentRepository.save(
-                new Assignment(tenantId, taskT1.getId(), "user:1", new BigDecimal("100.00")));
+                new Assignment(tenantId, teamId, taskT1.getId(), "user:1", new BigDecimal("100.00")));
 
-        final Project projectT2 = newProject(tenantT2);
-        final Task taskT2 = newLeaf(tenantT2, projectT2.getId(), 0, "T2-task");
+        final Project projectT2 = newProject(tenantT2, teamT2);
+        final Task taskT2 = newLeaf(tenantT2, teamT2, projectT2.getId(), 0, "T2-task");
         calendarRepository.save(new Calendar(
-                tenantT2, projectT2.getId(), CalendarScope.PROJECT, "C2", (short) 62, "{}"));
+                tenantT2, teamT2, projectT2.getId(), CalendarScope.PROJECT, "C2", (short) 62, "{}"));
         assignmentRepository.save(
-                new Assignment(tenantT2, taskT2.getId(), "user:2", new BigDecimal("100.00")));
+                new Assignment(tenantT2, teamT2, taskT2.getId(), "user:2", new BigDecimal("100.00")));
 
         // No T2 data leaks into T1's scope.
         assertThat(taskRepository.findAllByTenantId(tenantId))

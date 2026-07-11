@@ -33,6 +33,10 @@ public class Assignment {
     @Column(name = "tenant_id", nullable = false)
     private Long tenantId;
 
+    /** Team that owns this assignment; used for per-team portfolio scoping. */
+    @Column(name = "team_id", nullable = false)
+    private Long teamId;
+
     /** Assigned task id (FK {@code pilotage.task(id)}). */
     @Column(name = "task_id", nullable = false)
     private Long taskId;
@@ -85,13 +89,15 @@ public class Assignment {
      * Minimal constructor for creating a new assignment.
      *
      * @param tenantId     owning tenant's {@code public.tenants.id}
+     * @param teamId       owning team's {@code public.teams.id}
      * @param taskId       assigned task id
      * @param resourceRef  logical resource reference
      * @param unitsPercent assignment units in percent
      */
-    public Assignment(final Long tenantId, final Long taskId, final String resourceRef,
+    public Assignment(final Long tenantId, final Long teamId, final Long taskId, final String resourceRef,
             final BigDecimal unitsPercent) {
         this.tenantId = tenantId;
+        this.teamId = teamId;
         this.taskId = taskId;
         this.resourceRef = resourceRef;
         this.unitsPercent = unitsPercent;
@@ -131,6 +137,15 @@ public class Assignment {
      */
     public Long getTenantId() {
         return tenantId;
+    }
+
+    /**
+     * Returns the team identifier.
+     *
+     * @return the team's {@code public.teams.id}
+     */
+    public Long getTeamId() {
+        return teamId;
     }
 
     /**

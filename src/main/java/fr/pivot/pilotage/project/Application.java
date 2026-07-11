@@ -20,9 +20,12 @@ import java.util.List;
  * JPA entity representing a pilotage {@code Application} — the root of the pilotage hierarchy
  * (EN18.1).
  *
- * <p>An application belongs to a single tenant ({@code public.tenants.id}, owned by
- * {@code pivot-core} — no local entity, cf. ADR-006/ADR-022) and aggregates zero or more
- * {@link Project} children. Timestamps are managed automatically via JPA lifecycle callbacks.
+ * <p>An application belongs to a single tenant ({@code public.tenants.id}) and a single team
+ * ({@code public.teams.id}, owned by {@code pivot-core} — no local entity, cf.
+ * ADR-006/ADR-022) and aggregates zero or more {@link Project} children. {@code teamId} carries
+ * the fine-grained, per-team portfolio scoping (team_id retrofit) alongside the wider
+ * {@code tenantId} isolation boundary. Timestamps are managed automatically via JPA lifecycle
+ * callbacks.
  */
 @Entity
 @Table(name = "application", schema = "pilotage")
@@ -36,6 +39,10 @@ public class Application {
     /** Tenant that owns this application; used for multi-tenant isolation. */
     @Column(name = "tenant_id", nullable = false)
     private Long tenantId;
+
+    /** Team that owns this application; used for per-team portfolio scoping. */
+    @Column(name = "team_id", nullable = false)
+    private Long teamId;
 
     /** Human-readable application name; maximum 255 characters. */
     @Column(name = "name", nullable = false, length = 255)
@@ -67,11 +74,13 @@ public class Application {
      * Full constructor for creating a new application.
      *
      * @param tenantId owning tenant's {@code public.tenants.id}
+     * @param teamId   owning team's {@code public.teams.id}
      * @param name     application name (max 255 chars)
      * @param now      timestamp used for both {@code createdAt} and {@code updatedAt}
      */
-    public Application(final Long tenantId, final String name, final Instant now) {
+    public Application(final Long tenantId, final Long teamId, final String name, final Instant now) {
         this.tenantId = tenantId;
+        this.teamId = teamId;
         this.name = name;
         this.createdAt = now;
         this.updatedAt = now;
@@ -125,6 +134,15 @@ public class Application {
      */
     public Long getTenantId() {
         return tenantId;
+    }
+
+    /**
+     * Returns the team identifier.
+     *
+     * @return the team's {@code public.teams.id}
+     */
+    public Long getTeamId() {
+        return teamId;
     }
 
     /**

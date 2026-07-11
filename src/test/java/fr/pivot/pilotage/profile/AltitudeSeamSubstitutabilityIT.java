@@ -80,15 +80,18 @@ class AltitudeSeamSubstitutabilityIT {
     @Autowired private OrganizationProfileResolver profileResolver;
 
     private long tenantId;
+    private long teamId;
 
     private static final Instant MON_0900 =
             LocalDate.of(2024, 1, 1).atStartOfDay(ZoneOffset.UTC).plusHours(9).toInstant();
 
-    /** Seeds a fresh tenant before each test. */
+    /** Seeds a fresh tenant and team before each test. */
     @BeforeEach
     void setUp() throws Exception {
         tenantId = PlatformSchemaTestSupport.seedTenant(
                 POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword());
+        teamId = PlatformSchemaTestSupport.seedTeam(
+                POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword(), tenantId);
     }
 
     // -------- AC: the active seam bean is the profile-backed provider --------------------------
@@ -109,9 +112,9 @@ class AltitudeSeamSubstitutabilityIT {
     @Test
     void projectionDefault_identicalUnderBothBackings() {
         final Project project = newProject();
-        final Task summary = taskRepository.save(new Task(tenantId, project.getId(), 0, "S",
+        final Task summary = taskRepository.save(new Task(tenantId, teamId, project.getId(), 0, "S",
                 NodeKind.SUMMARY, false, TemporalPrecision.QUARTER, 0));
-        final Task leaf = new Task(tenantId, project.getId(), 1, "L", NodeKind.LEAF, false,
+        final Task leaf = new Task(tenantId, teamId, project.getId(), 1, "L", NodeKind.LEAF, false,
                 TemporalPrecision.DAY, 0);
         leaf.setParentTaskId(summary.getId());
         leaf.setStartDate(MON_0900);
@@ -143,7 +146,7 @@ class AltitudeSeamSubstitutabilityIT {
 
     private Project newProject() {
         final Instant now = Instant.now();
-        final Application app = applicationRepository.save(new Application(tenantId, "App", now));
-        return projectRepository.save(new Project(app, tenantId, "P", now));
+        final Application app = applicationRepository.save(new Application(tenantId, teamId, "App", now));
+        return projectRepository.save(new Project(app, tenantId, teamId, "P", now));
     }
 }

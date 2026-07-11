@@ -20,10 +20,10 @@ class DefaultOrganizationProfileTest {
     @Test
     void carriesFourNonNullAttributes() {
         final DefaultOrganizationProfile profile = new DefaultOrganizationProfile(
-                Altitude.MACRO, SovereigntyClass.NEUTRAL, RigorLevel.STANDARD, Set.of("roadmap"));
+                Altitude.MACRO, SovereigntyClass.ZONE_B_CONTROLEE, RigorLevel.STANDARD, Set.of("roadmap"));
 
         assertThat(profile.altitude()).isEqualTo(Altitude.MACRO);
-        assertThat(profile.sovereigntyClass()).isEqualTo(SovereigntyClass.NEUTRAL);
+        assertThat(profile.sovereigntyClass()).isEqualTo(SovereigntyClass.ZONE_B_CONTROLEE);
         assertThat(profile.rigorLevel()).isEqualTo(RigorLevel.STANDARD);
         assertThat(profile.defaultModules()).containsExactly("roadmap");
     }
@@ -31,13 +31,13 @@ class DefaultOrganizationProfileTest {
     @Test
     void rejectsAnyNullAttribute() {
         assertThatNullPointerException().isThrownBy(() -> new DefaultOrganizationProfile(
-                null, SovereigntyClass.NEUTRAL, RigorLevel.STANDARD, Set.of()));
+                null, SovereigntyClass.ZONE_B_CONTROLEE, RigorLevel.STANDARD, Set.of()));
         assertThatNullPointerException().isThrownBy(() -> new DefaultOrganizationProfile(
                 Altitude.MACRO, null, RigorLevel.STANDARD, Set.of()));
         assertThatNullPointerException().isThrownBy(() -> new DefaultOrganizationProfile(
-                Altitude.MACRO, SovereigntyClass.NEUTRAL, null, Set.of()));
+                Altitude.MACRO, SovereigntyClass.ZONE_B_CONTROLEE, null, Set.of()));
         assertThatNullPointerException().isThrownBy(() -> new DefaultOrganizationProfile(
-                Altitude.MACRO, SovereigntyClass.NEUTRAL, RigorLevel.STANDARD, null));
+                Altitude.MACRO, SovereigntyClass.ZONE_B_CONTROLEE, RigorLevel.STANDARD, null));
     }
 
     @Test
@@ -45,7 +45,7 @@ class DefaultOrganizationProfileTest {
         final Set<String> source = new HashSet<>();
         source.add("roadmap");
         final DefaultOrganizationProfile profile = new DefaultOrganizationProfile(
-                Altitude.MACRO, SovereigntyClass.NEUTRAL, RigorLevel.STANDARD, source);
+                Altitude.MACRO, SovereigntyClass.ZONE_B_CONTROLEE, RigorLevel.STANDARD, source);
 
         // Mutating the source must not affect the profile.
         source.add("gantt");
@@ -62,7 +62,7 @@ class DefaultOrganizationProfileTest {
         final DefaultOrganizationProfile profile = props.toProfile();
 
         assertThat(profile.altitude()).isEqualTo(Altitude.MACRO);
-        assertThat(profile.sovereigntyClass()).isEqualTo(SovereigntyClass.NEUTRAL);
+        assertThat(profile.sovereigntyClass()).isEqualTo(SovereigntyClass.ZONE_B_CONTROLEE);
         assertThat(profile.rigorLevel()).isEqualTo(RigorLevel.STANDARD);
         assertThat(profile.defaultModules()).containsExactly("roadmap");
     }
@@ -71,7 +71,7 @@ class DefaultOrganizationProfileTest {
     void propertiesSettersRebindAndCopyDefensively() {
         final DefaultProfileProperties props = new DefaultProfileProperties();
         props.setAltitude(Altitude.DETAIL);
-        props.setSovereigntyClass(SovereigntyClass.SOVEREIGN);
+        props.setSovereigntyClass(SovereigntyClass.ZONE_A_SOUVERAINE);
         props.setRigorLevel(RigorLevel.STRICT);
         final Set<String> mods = new HashSet<>(Set.of("roadmap", "gantt"));
         props.setModules(mods);
@@ -79,7 +79,7 @@ class DefaultOrganizationProfileTest {
 
         final DefaultOrganizationProfile profile = props.toProfile();
         assertThat(profile.altitude()).isEqualTo(Altitude.DETAIL);
-        assertThat(profile.sovereigntyClass()).isEqualTo(SovereigntyClass.SOVEREIGN);
+        assertThat(profile.sovereigntyClass()).isEqualTo(SovereigntyClass.ZONE_A_SOUVERAINE);
         assertThat(profile.rigorLevel()).isEqualTo(RigorLevel.STRICT);
         assertThat(profile.defaultModules()).containsExactlyInAnyOrder("roadmap", "gantt");
         assertThat(props.getModules()).doesNotContain("ppi");
@@ -95,8 +95,8 @@ class DefaultOrganizationProfileTest {
     @Test
     void policyEnumsExposeExpectedConstants() {
         assertThat(SovereigntyClass.values())
-                .containsExactly(SovereigntyClass.NEUTRAL, SovereigntyClass.RESTRICTED,
-                        SovereigntyClass.SOVEREIGN);
+                .containsExactly(SovereigntyClass.ZONE_A_SOUVERAINE, SovereigntyClass.ZONE_B_CONTROLEE,
+                        SovereigntyClass.ZONE_C_DMZ_EXTERNE);
         assertThat(RigorLevel.values())
                 .containsExactly(RigorLevel.LIGHT, RigorLevel.STANDARD, RigorLevel.STRICT);
     }

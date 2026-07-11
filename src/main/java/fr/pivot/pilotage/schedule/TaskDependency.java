@@ -34,6 +34,10 @@ public class TaskDependency {
     @Column(name = "tenant_id", nullable = false)
     private Long tenantId;
 
+    /** Team that owns this dependency; used for per-team portfolio scoping. */
+    @Column(name = "team_id", nullable = false)
+    private Long teamId;
+
     /** Predecessor task id (FK {@code pilotage.task(id)}). */
     @Column(name = "predecessor_task_id", nullable = false)
     private Long predecessorTaskId;
@@ -67,14 +71,16 @@ public class TaskDependency {
      * Full constructor for creating a new dependency.
      *
      * @param tenantId          owning tenant's {@code public.tenants.id}
+     * @param teamId            owning team's {@code public.teams.id}
      * @param predecessorTaskId predecessor task id
      * @param successorTaskId   successor task id
      * @param linkType          the link type
      * @param lagMinutes        lag/lead in worked minutes
      */
-    public TaskDependency(final Long tenantId, final Long predecessorTaskId, final Long successorTaskId,
-            final DependencyLinkType linkType, final Integer lagMinutes) {
+    public TaskDependency(final Long tenantId, final Long teamId, final Long predecessorTaskId,
+            final Long successorTaskId, final DependencyLinkType linkType, final Integer lagMinutes) {
         this.tenantId = tenantId;
+        this.teamId = teamId;
         this.predecessorTaskId = predecessorTaskId;
         this.successorTaskId = successorTaskId;
         this.linkType = linkType;
@@ -115,6 +121,15 @@ public class TaskDependency {
      */
     public Long getTenantId() {
         return tenantId;
+    }
+
+    /**
+     * Returns the team identifier.
+     *
+     * @return the team's {@code public.teams.id}
+     */
+    public Long getTeamId() {
+        return teamId;
     }
 
     /**

@@ -72,15 +72,17 @@ class PlanProjectionServiceIT {
     @Autowired private PlanProjectionService projectionService;
 
     private long tenantId;
+    private long teamId;
 
     private static final String WT = "{\"ranges\":[[\"09:00\",\"17:00\"]]}";
     private static final Instant MON_0900 =
             LocalDate.of(2024, 1, 1).atStartOfDay(ZoneOffset.UTC).plusHours(9).toInstant();
 
-    /** Seeds a fresh tenant before each test. */
+    /** Seeds a fresh tenant and team before each test. */
     @BeforeEach
     void setUp() throws Exception {
         tenantId = seedTenant();
+        teamId = seedTeam(tenantId);
     }
 
     private long seedTenant() throws Exception {
@@ -88,20 +90,25 @@ class PlanProjectionServiceIT {
                 POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword());
     }
 
-    private Project newProjectWithCalendar(final long owner) {
+    private long seedTeam(final long owner) throws Exception {
+        return PlatformSchemaTestSupport.seedTeam(
+                POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword(), owner);
+    }
+
+    private Project newProjectWithCalendar(final long owner, final long team) {
         final Instant now = Instant.now();
-        final Application app = applicationRepository.save(new Application(owner, "App", now));
-        final Project project = projectRepository.save(new Project(app, owner, "P", now));
+        final Application app = applicationRepository.save(new Application(owner, team, "App", now));
+        final Project project = projectRepository.save(new Project(app, owner, team, "P", now));
         final Calendar cal = calendarRepository.save(new Calendar(
-                owner, project.getId(), CalendarScope.PROJECT, "Std", (short) 0b0011111, WT));
+                owner, team, project.getId(), CalendarScope.PROJECT, "Std", (short) 0b0011111, WT));
         project.setCalendar(cal);
         project.setStatusDate(LocalDate.of(2024, 1, 1));
         return projectRepository.save(project);
     }
 
-    private Task leaf(final long owner, final long projectId, final int position, final String name,
-            final int durationMinutes) {
-        final Task t = new Task(owner, projectId, position, name, NodeKind.LEAF, false,
+    private Task leaf(final long owner, final long team, final long projectId, final int position,
+            final String name, final int durationMinutes) {
+        final Task t = new Task(owner, team, projectId, position, name, NodeKind.LEAF, false,
                 TemporalPrecision.DAY, 0);
         t.setDurationMinutes(durationMinutes);
         t.setStartDate(MON_0900);
@@ -112,11 +119,11 @@ class PlanProjectionServiceIT {
 
     @Test
     void loadComputeProject_detailCarriesDerivedSchedule() {
-        final Project project = newProjectWithCalendar(tenantId);
-        final Task a = leaf(tenantId, project.getId(), 0, "A", 480);
-        final Task b = leaf(tenantId, project.getId(), 1, "B", 480);
+        final Project project = newProjectWithCalendar(tenantId, teamId);
+        final Task a = leaf(tenantId, teamId, project.getId(), 0, "A", 480);
+        final Task b = leaf(tenantId, teamId, project.getId(), 1, "B", 480);
         dependencyRepository.save(new TaskDependency(
-                tenantId, a.getId(), b.getId(), DependencyLinkType.FS, 0));
+                tenantId, teamId, a.getId(), b.getId(), DependencyLinkType.FS, 0));
 
         // EN22.1b computes and persists the derived columns…
         schedulingService.scheduleProject(project.getId(), tenantId);
@@ -137,8 +144,8 @@ class PlanProjectionServiceIT {
 
     @Test
     void sharedMilestone_sameIdInBothViews_noDuplication() {
-        final Project project = newProjectWithCalendar(tenantId);
-        final Task milestone = new Task(tenantId, project.getId(), 0, "Go-live",
+        final Project project = newProjectWithCalendar(tenantId, teamId);
+        final Task milestone = new Task(tenantId, teamId, project.getId(), 0, "Go-live",
                 NodeKind.MILESTONE, true, TemporalPrecision.DAY, 0);
         milestone.setDurationMinutes(0);
         milestone.setStartDate(MON_0900);
@@ -166,8 +173,8 @@ class PlanProjectionServiceIT {
     @Test
     void foreignTenant_projectNotProjected() throws Exception {
         final long tenantT2 = seedTenant();
-        final Project projectT1 = newProjectWithCalendar(tenantId);
-        leaf(tenantId, projectT1.getId(), 0, "T1", 480);
+        final Project projectT1 = newProjectWithCalendar(tenantId, teamId);
+        leaf(tenantId, teamId, projectT1.getId(), 0, "T1", 480);
 
         assertThat(projectionService.project(projectT1.getId(), tenantT2, Altitude.DETAIL, Layout.GANTT))
                 .isEmpty();

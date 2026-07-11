@@ -22,6 +22,16 @@ public interface CalendarRepository extends JpaRepository<Calendar, Long> {
     List<Calendar> findAllByTenantId(Long tenantId);
 
     /**
+     * Finds all calendars belonging to the given tenant and team (per-team portfolio scoping,
+     * team_id retrofit).
+     *
+     * @param tenantId the {@code public.tenants.id} to restrict results to
+     * @param teamId   the {@code public.teams.id} to restrict results to
+     * @return the calendars owned by that tenant/team (possibly empty)
+     */
+    List<Calendar> findAllByTenantIdAndTeamId(Long tenantId, Long teamId);
+
+    /**
      * Finds a calendar by id, verifying it belongs to the given tenant.
      *
      * @param id       the calendar id
@@ -29,4 +39,15 @@ public interface CalendarRepository extends JpaRepository<Calendar, Long> {
      * @return an {@link Optional} with the calendar, or empty if not found for that tenant
      */
     Optional<Calendar> findByIdAndTenantId(Long id, Long tenantId);
+
+    /**
+     * Finds a calendar by id, verifying it belongs to the given tenant and team (per-team
+     * portfolio scoping, team_id retrofit).
+     *
+     * @param id       the calendar id
+     * @param tenantId the expected tenant's {@code public.tenants.id}
+     * @param teamId   the expected team's {@code public.teams.id}
+     * @return an {@link Optional} with the calendar, or empty if not found for that tenant/team
+     */
+    Optional<Calendar> findByIdAndTenantIdAndTeamId(Long id, Long tenantId, Long teamId);
 }

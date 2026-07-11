@@ -32,6 +32,10 @@ public class Baseline {
     @Column(name = "tenant_id", nullable = false)
     private Long tenantId;
 
+    /** Team that owns this baseline; used for per-team portfolio scoping. */
+    @Column(name = "team_id", nullable = false)
+    private Long teamId;
+
     /** Owning project id (FK {@code pilotage.project(id)}). */
     @Column(name = "project_id", nullable = false)
     private Long projectId;
@@ -60,13 +64,15 @@ public class Baseline {
      * Full constructor for creating a new baseline.
      *
      * @param tenantId      owning tenant's {@code public.tenants.id}
+     * @param teamId        owning team's {@code public.teams.id}
      * @param projectId     owning project id
      * @param baselineIndex baseline index in 0..10
      * @param capturedAt    capture timestamp
      */
-    public Baseline(final Long tenantId, final Long projectId, final Short baselineIndex,
+    public Baseline(final Long tenantId, final Long teamId, final Long projectId, final Short baselineIndex,
             final Instant capturedAt) {
         this.tenantId = tenantId;
+        this.teamId = teamId;
         this.projectId = projectId;
         this.baselineIndex = baselineIndex;
         this.capturedAt = capturedAt;
@@ -106,6 +112,15 @@ public class Baseline {
      */
     public Long getTenantId() {
         return tenantId;
+    }
+
+    /**
+     * Returns the team identifier.
+     *
+     * @return the team's {@code public.teams.id}
+     */
+    public Long getTeamId() {
+        return teamId;
     }
 
     /**

@@ -25,10 +25,11 @@ import java.time.LocalDate;
  *
  * <p>A project is attached to exactly one {@link Application} ({@code application_id NOT NULL} —
  * this carries the "one Project = one Application" rule) and belongs to a single tenant
- * ({@code public.tenants.id}, owned by {@code pivot-core}). The {@code tenantId} is duplicated
- * on the project (rather than only reachable through the application) to allow direct
- * tenant-scoped filtering without a systematic join. Timestamps are managed automatically via
- * JPA lifecycle callbacks.
+ * ({@code public.tenants.id}) and a single team ({@code public.teams.id}, both owned by
+ * {@code pivot-core}). The {@code tenantId} and {@code teamId} are duplicated on the project
+ * (rather than only reachable through the application) to allow direct tenant/team-scoped
+ * filtering without a systematic join. Timestamps are managed automatically via JPA lifecycle
+ * callbacks.
  *
  * <p>EN22.1a adds the temporal-model anchor columns (frozen contract §a, {@code project}): the
  * default project calendar, the scheduling mode, the status (data) date and the default temporal
@@ -52,6 +53,10 @@ public class Project {
     /** Tenant that owns this project; used for multi-tenant isolation. */
     @Column(name = "tenant_id", nullable = false)
     private Long tenantId;
+
+    /** Team that owns this project; used for per-team portfolio scoping. */
+    @Column(name = "team_id", nullable = false)
+    private Long teamId;
 
     /** Human-readable project name; maximum 255 characters. */
     @Column(name = "name", nullable = false, length = 255)
@@ -105,18 +110,21 @@ public class Project {
     /**
      * Full constructor for creating a new project.
      *
-     * <p>The {@code tenantId} is provided explicitly rather than derived from the application so
-     * the caller stays in control of tenant assignment; the service layer (later US) enforces
-     * that it matches {@code application.getTenantId()}.
+     * <p>The {@code tenantId}/{@code teamId} are provided explicitly rather than derived from the
+     * application so the caller stays in control of tenant/team assignment; the service layer
+     * (later US) enforces that they match {@code application.getTenantId()}/{@code getTeamId()}.
      *
      * @param application the owning application (must not be {@code null})
      * @param tenantId    owning tenant's {@code public.tenants.id}
+     * @param teamId      owning team's {@code public.teams.id}
      * @param name        project name (max 255 chars)
      * @param now         timestamp used for both {@code createdAt} and {@code updatedAt}
      */
-    public Project(final Application application, final Long tenantId, final String name, final Instant now) {
+    public Project(final Application application, final Long tenantId, final Long teamId, final String name,
+            final Instant now) {
         this.application = application;
         this.tenantId = tenantId;
+        this.teamId = teamId;
         this.name = name;
         this.createdAt = now;
         this.updatedAt = now;
@@ -178,6 +186,15 @@ public class Project {
      */
     public Long getTenantId() {
         return tenantId;
+    }
+
+    /**
+     * Returns the team identifier.
+     *
+     * @return the team's {@code public.teams.id}
+     */
+    public Long getTeamId() {
+        return teamId;
     }
 
     /**

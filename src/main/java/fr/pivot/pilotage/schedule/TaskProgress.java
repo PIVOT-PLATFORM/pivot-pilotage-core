@@ -33,6 +33,10 @@ public class TaskProgress {
     @Column(name = "tenant_id", nullable = false)
     private Long tenantId;
 
+    /** Team that owns this progress; used for per-team portfolio scoping. */
+    @Column(name = "team_id", nullable = false)
+    private Long teamId;
+
     /** Task id (FK {@code pilotage.task(id)}, UNIQUE). */
     @Column(name = "task_id", nullable = false)
     private Long taskId;
@@ -73,11 +77,14 @@ public class TaskProgress {
      * Minimal constructor for creating a new progress record.
      *
      * @param tenantId        owning tenant's {@code public.tenants.id}
+     * @param teamId          owning team's {@code public.teams.id}
      * @param taskId          the task id
      * @param percentComplete the temporal percent complete
      */
-    public TaskProgress(final Long tenantId, final Long taskId, final BigDecimal percentComplete) {
+    public TaskProgress(final Long tenantId, final Long teamId, final Long taskId,
+            final BigDecimal percentComplete) {
         this.tenantId = tenantId;
+        this.teamId = teamId;
         this.taskId = taskId;
         this.percentComplete = percentComplete;
     }
@@ -116,6 +123,15 @@ public class TaskProgress {
      */
     public Long getTenantId() {
         return tenantId;
+    }
+
+    /**
+     * Returns the team identifier.
+     *
+     * @return the team's {@code public.teams.id}
+     */
+    public Long getTeamId() {
+        return teamId;
     }
 
     /**
