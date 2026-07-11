@@ -69,7 +69,7 @@ public class OrganizationProfile {
 
     /** Overridden sovereignty class. */
     @Enumerated(EnumType.STRING)
-    @Column(name = "sovereignty_class", nullable = false, length = 16)
+    @Column(name = "sovereignty_class", nullable = false, length = 32)
     private SovereigntyClass sovereigntyClass;
 
     /** Overridden rigor level. */

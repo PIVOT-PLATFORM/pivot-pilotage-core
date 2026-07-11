@@ -426,7 +426,7 @@ CREATE TABLE IF NOT EXISTS pilotage.organization_profile (
     tenant_id         BIGINT      NOT NULL REFERENCES public.tenants(id),
     team_id           BIGINT      NOT NULL REFERENCES public.teams(id),
     altitude          VARCHAR(16) NOT NULL,
-    sovereignty_class VARCHAR(16) NOT NULL,
+    sovereignty_class VARCHAR(32) NOT NULL,
     rigor_level       VARCHAR(16) NOT NULL,
     default_modules   JSONB       NOT NULL,
     created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
