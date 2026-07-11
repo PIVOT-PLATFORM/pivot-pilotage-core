@@ -3,39 +3,76 @@
 -- Pilotage est plie dans ce fichier jusqu'au feu vert BETA du mainteneur — pas de V2/V3 separe.
 CREATE SCHEMA IF NOT EXISTS pilotage;
 
+-- =====================================================================================
+-- Retrofit team_id (fix/pilotage-schema-team-id-retrofit) — alignement sur le pattern deja
+-- en prod dans pivot-agilite-core (V1__schema_init.sql : agilite.retro_sessions/wheel/...) et
+-- sur la table des schemas de pivot-platform/CLAUDE.md ("pilotage -> FK -> public.teams.id").
+--
+-- Constat : chaque table pilotage.* posee jusqu'ici (EN18.1, EN22.1a/b/c, EN18.10) porte
+-- tenant_id SEUL, un isolement au niveau tenant entier. Sans team_id, une entreprise avec
+-- plusieurs equipes dans le meme tenant partagerait un unique portefeuille Applications/Projets
+-- entre toutes ses equipes au lieu d'un portefeuille par equipe — defaut de conception corrige
+-- ici en ajoutant team_id BIGINT NOT NULL REFERENCES public.teams(id) sur CHAQUE table qui
+-- portait tenant_id seul, avec un index dedie (miroir de l'index tenant_id existant).
+--
+-- Duplication deliberee : comme tenant_id est deja duplique sur les tables filles (project,
+-- task, ...) plutot que de forcer une jointure remontant a application a chaque lecture
+-- (cf. commentaire d'origine sur pilotage.project), team_id suit exactement le meme principe —
+-- duplique sur chaque table plutot que resolu par jointure.
+--
+-- Coherence tenant/team (question tranchee ici, PO Agent) : verifie sur pivot-agilite-core
+-- (PlatformTeam.java + RetroSessionService) que la coherence "team_id.tenant_id == tenant_id de
+-- la ligne" est une regle APPLICATIVE (service), jamais une contrainte SQL composite — public.
+-- teams n'expose pas de cle UNIQUE (id, tenant_id) permettant une FK composite cote pilotage,
+-- et pivot-agilite-core valide cette coherence cote service (ex. RetroSessionService leve
+-- RetroTeamNotFoundException si le teamId n'existe pas OU appartient a un autre tenant). Meme
+-- posture ici : simple FK vers public.teams(id) au niveau SQL ; la coherence tenant<->team est
+-- une regle de service, a appliquer au fil des futurs endpoints d'ecriture (pas encore de
+-- service CRUD pour application/project/task a ce stade — seul le nouvel endpoint d'override du
+-- profil d'organisation, ecrit dans cette meme passe, l'applique reellement, en JDBC brut,
+-- meme pattern que OrganizationProfileResolver.tenantExists ci-dessous).
+-- =====================================================================================
+
 -- EN18.1 — Socle de la hierarchie Pilotage : Application -> Projet.
--- FK cross-schema uniquement vers public.tenants(id) (identite plateforme possedee par
--- pivot-core, cf. ADR-006/ADR-022 et CLAUDE.md "Architecture BDD") — jamais d'entite locale
--- pour public.*, jamais de ON DELETE CASCADE vers public (les tenants ne sont pas supprimes en
--- dur, modele de desactivation/soft-delete). Les FK intra-schema pilotage.* portent au contraire
--- ON DELETE CASCADE (suppression d'une Application -> ses Projets).
+-- FK cross-schema uniquement vers public.tenants(id) / public.teams(id) (identite plateforme
+-- possedee par pivot-core, cf. ADR-006/ADR-022 et CLAUDE.md "Architecture BDD") — jamais
+-- d'entite locale pour public.*, jamais de ON DELETE CASCADE vers public (les tenants/equipes
+-- ne sont pas supprimes en dur, modele de desactivation/soft-delete). Les FK intra-schema
+-- pilotage.* portent au contraire ON DELETE CASCADE (suppression d'une Application -> ses
+-- Projets).
 --
 -- Perimetre STRICT EN18.1 : uniquement application + project. Les entites temporelles (task,
 -- dependances, jalons...) relevent d'EN22.1a et ne sont PAS creees ici.
 
--- Application : racine de la hierarchie de pilotage, rattachee a un tenant.
+-- Application : racine de la hierarchie de pilotage, rattachee a un tenant ET une equipe —
+-- team_id porte le rattachement fin (portefeuille par equipe, retrofit ci-dessus).
 CREATE TABLE IF NOT EXISTS pilotage.application (
     id          BIGINT       GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     tenant_id   BIGINT       NOT NULL REFERENCES public.tenants(id),
+    team_id     BIGINT       NOT NULL REFERENCES public.teams(id),
     name        VARCHAR(255) NOT NULL,
     created_at  TIMESTAMPTZ  NOT NULL DEFAULT now(),
     updated_at  TIMESTAMPTZ  NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_application_tenant_id ON pilotage.application(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_application_team_id   ON pilotage.application(team_id);
 
 -- Project : rattache a exactement une Application (application_id NOT NULL porte la regle
--- metier "un Projet = une Application"). tenant_id est duplique sur le projet pour permettre
--- un filtrage tenant direct (isolation) sans jointure systematique vers l'application.
+-- metier "un Projet = une Application"). tenant_id ET team_id sont dupliques sur le projet pour
+-- permettre un filtrage tenant/equipe direct (isolation) sans jointure systematique vers
+-- l'application.
 CREATE TABLE IF NOT EXISTS pilotage.project (
     id              BIGINT       GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     application_id  BIGINT       NOT NULL REFERENCES pilotage.application(id) ON DELETE CASCADE,
     tenant_id       BIGINT       NOT NULL REFERENCES public.tenants(id),
+    team_id         BIGINT       NOT NULL REFERENCES public.teams(id),
     name            VARCHAR(255) NOT NULL,
     created_at      TIMESTAMPTZ  NOT NULL DEFAULT now(),
     updated_at      TIMESTAMPTZ  NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_project_application_id ON pilotage.project(application_id);
 CREATE INDEX IF NOT EXISTS idx_project_tenant_id      ON pilotage.project(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_project_team_id        ON pilotage.project(team_id);
 
 -- =====================================================================================
 -- EN22.1a — Schema temporel `pilotage` (contrat fige EN22.1 section (a) — 11 tables).
@@ -60,14 +97,19 @@ CREATE INDEX IF NOT EXISTS idx_project_tenant_id      ON pilotage.project(tenant
 -- Ordre de creation contraint : calendar avant project.calendar_id ; task avant les tables
 -- qui la referencent ; phase.parent_task_id / task.parent_task_id auto-references ajoutees
 -- apres coup pour lever le cycle de dependance de creation phase<->task.
+--
+-- Retrofit team_id (voir bandeau en tete de fichier) : chacune de ces tables recoit desormais
+-- aussi team_id BIGINT NOT NULL REFERENCES public.teams(id) + index dedie, meme principe de
+-- duplication deliberee que tenant_id.
 -- =====================================================================================
 
 -- --- calendar : cree avant project (project.calendar_id le reference) et avant task -----
 -- Calendrier projet | tache | ressource : jours ouvres + exceptions. project_id NULL =>
--- calendrier tenant/base reutilisable. Aucune FK sortante hors pilotage/public.tenants.
+-- calendrier tenant/base reutilisable. Aucune FK sortante hors pilotage/public.tenants/public.teams.
 CREATE TABLE IF NOT EXISTS pilotage.calendar (
     id                BIGINT      GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     tenant_id         BIGINT      NOT NULL REFERENCES public.tenants(id),
+    team_id           BIGINT      NOT NULL REFERENCES public.teams(id),
     project_id        BIGINT      REFERENCES pilotage.project(id) ON DELETE CASCADE,
     scope             VARCHAR(16) NOT NULL,
     name              VARCHAR(255) NOT NULL,
@@ -78,12 +120,14 @@ CREATE TABLE IF NOT EXISTS pilotage.calendar (
     CONSTRAINT chk_calendar_scope CHECK (scope IN ('PROJECT', 'TASK', 'RESOURCE'))
 );
 CREATE INDEX IF NOT EXISTS idx_calendar_tenant_id  ON pilotage.calendar(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_calendar_team_id    ON pilotage.calendar(team_id);
 CREATE INDEX IF NOT EXISTS idx_calendar_project_id ON pilotage.calendar(project_id);
 
 -- --- calendar_exception : jours derogatoires d'un calendrier -----------------------------
 CREATE TABLE IF NOT EXISTS pilotage.calendar_exception (
     id             BIGINT      GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     tenant_id      BIGINT      NOT NULL REFERENCES public.tenants(id),
+    team_id        BIGINT      NOT NULL REFERENCES public.teams(id),
     calendar_id    BIGINT      NOT NULL REFERENCES pilotage.calendar(id) ON DELETE CASCADE,
     exception_date DATE        NOT NULL,
     is_working     BOOLEAN     NOT NULL,
@@ -92,6 +136,7 @@ CREATE TABLE IF NOT EXISTS pilotage.calendar_exception (
     updated_at     TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_calendar_exception_tenant_id   ON pilotage.calendar_exception(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_calendar_exception_team_id     ON pilotage.calendar_exception(team_id);
 CREATE INDEX IF NOT EXISTS idx_calendar_exception_calendar_id ON pilotage.calendar_exception(calendar_id);
 
 -- --- project : extension temporelle (section (a) #project) --------------------------------
@@ -124,6 +169,7 @@ CREATE INDEX IF NOT EXISTS idx_project_calendar_id ON pilotage.project(calendar_
 CREATE TABLE IF NOT EXISTS pilotage.task (
     id                  BIGINT       GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     tenant_id           BIGINT       NOT NULL REFERENCES public.tenants(id),
+    team_id             BIGINT       NOT NULL REFERENCES public.teams(id),
     project_id          BIGINT       NOT NULL REFERENCES pilotage.project(id) ON DELETE CASCADE,
     phase_id            BIGINT,
     parent_task_id      BIGINT,
@@ -169,6 +215,7 @@ ALTER TABLE pilotage.task
     ADD CONSTRAINT fk_task_parent_task
         FOREIGN KEY (parent_task_id) REFERENCES pilotage.task(id) ON DELETE CASCADE;
 CREATE INDEX IF NOT EXISTS idx_task_tenant_id      ON pilotage.task(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_task_team_id        ON pilotage.task(team_id);
 CREATE INDEX IF NOT EXISTS idx_task_project_id     ON pilotage.task(project_id);
 CREATE INDEX IF NOT EXISTS idx_task_phase_id       ON pilotage.task(phase_id);
 CREATE INDEX IF NOT EXISTS idx_task_parent_task_id ON pilotage.task(parent_task_id);
@@ -179,6 +226,7 @@ CREATE INDEX IF NOT EXISTS idx_task_parent_task_id ON pilotage.task(parent_task_
 CREATE TABLE IF NOT EXISTS pilotage.phase (
     id             BIGINT       GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     tenant_id      BIGINT       NOT NULL REFERENCES public.tenants(id),
+    team_id        BIGINT       NOT NULL REFERENCES public.teams(id),
     project_id     BIGINT       NOT NULL REFERENCES pilotage.project(id) ON DELETE CASCADE,
     parent_task_id BIGINT       REFERENCES pilotage.task(id) ON DELETE SET NULL,
     name           VARCHAR(255) NOT NULL,
@@ -187,6 +235,7 @@ CREATE TABLE IF NOT EXISTS pilotage.phase (
     updated_at     TIMESTAMPTZ  NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_phase_tenant_id      ON pilotage.phase(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_phase_team_id        ON pilotage.phase(team_id);
 CREATE INDEX IF NOT EXISTS idx_phase_project_id     ON pilotage.phase(project_id);
 CREATE INDEX IF NOT EXISTS idx_phase_parent_task_id ON pilotage.phase(parent_task_id);
 
@@ -204,6 +253,7 @@ ALTER TABLE pilotage.task
 CREATE TABLE IF NOT EXISTS pilotage.task_dependency (
     id                   BIGINT      GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     tenant_id            BIGINT      NOT NULL REFERENCES public.tenants(id),
+    team_id              BIGINT      NOT NULL REFERENCES public.teams(id),
     predecessor_task_id  BIGINT      NOT NULL REFERENCES pilotage.task(id) ON DELETE CASCADE,
     successor_task_id    BIGINT      NOT NULL REFERENCES pilotage.task(id) ON DELETE CASCADE,
     link_type            VARCHAR(2)  NOT NULL,
@@ -215,6 +265,7 @@ CREATE TABLE IF NOT EXISTS pilotage.task_dependency (
     CONSTRAINT uq_task_dependency UNIQUE (predecessor_task_id, successor_task_id, link_type)
 );
 CREATE INDEX IF NOT EXISTS idx_task_dependency_tenant_id   ON pilotage.task_dependency(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_task_dependency_team_id     ON pilotage.task_dependency(team_id);
 CREATE INDEX IF NOT EXISTS idx_task_dependency_predecessor ON pilotage.task_dependency(predecessor_task_id);
 CREATE INDEX IF NOT EXISTS idx_task_dependency_successor   ON pilotage.task_dependency(successor_task_id);
 
@@ -224,6 +275,7 @@ CREATE INDEX IF NOT EXISTS idx_task_dependency_successor   ON pilotage.task_depe
 CREATE TABLE IF NOT EXISTS pilotage.task_constraint (
     id              BIGINT      GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     tenant_id       BIGINT      NOT NULL REFERENCES public.tenants(id),
+    team_id         BIGINT      NOT NULL REFERENCES public.teams(id),
     task_id         BIGINT      NOT NULL REFERENCES pilotage.task(id) ON DELETE CASCADE,
     constraint_type VARCHAR(8)  NOT NULL,
     constraint_date TIMESTAMPTZ,
@@ -235,6 +287,7 @@ CREATE TABLE IF NOT EXISTS pilotage.task_constraint (
     CONSTRAINT uq_task_constraint_task UNIQUE (task_id)
 );
 CREATE INDEX IF NOT EXISTS idx_task_constraint_tenant_id ON pilotage.task_constraint(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_task_constraint_team_id   ON pilotage.task_constraint(team_id);
 
 -- --- assignment : ressource affectee a une tache (ref logique, pas de FID inter-modules) --
 -- resource_ref = reference LOGIQUE (identite resolue via bus PIVOT — ADR-006, aucune FK
@@ -242,6 +295,7 @@ CREATE INDEX IF NOT EXISTS idx_task_constraint_tenant_id ON pilotage.task_constr
 CREATE TABLE IF NOT EXISTS pilotage.assignment (
     id                     BIGINT        GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     tenant_id              BIGINT        NOT NULL REFERENCES public.tenants(id),
+    team_id                BIGINT        NOT NULL REFERENCES public.teams(id),
     task_id                BIGINT        NOT NULL REFERENCES pilotage.task(id) ON DELETE CASCADE,
     resource_ref           VARCHAR(255)  NOT NULL,
     units_percent          NUMERIC(6,2)  NOT NULL DEFAULT 100,
@@ -255,12 +309,14 @@ CREATE TABLE IF NOT EXISTS pilotage.assignment (
     updated_at             TIMESTAMPTZ   NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_assignment_tenant_id ON pilotage.assignment(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_assignment_team_id   ON pilotage.assignment(team_id);
 CREATE INDEX IF NOT EXISTS idx_assignment_task_id   ON pilotage.assignment(task_id);
 
 -- --- task_progress : 1:1 task (UNIQUE task_id) --------------------------------------------
 CREATE TABLE IF NOT EXISTS pilotage.task_progress (
     id                        BIGINT       GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     tenant_id                 BIGINT       NOT NULL REFERENCES public.tenants(id),
+    team_id                   BIGINT       NOT NULL REFERENCES public.teams(id),
     task_id                   BIGINT       NOT NULL REFERENCES pilotage.task(id) ON DELETE CASCADE,
     percent_complete          NUMERIC(5,2) NOT NULL DEFAULT 0,
     physical_percent_complete NUMERIC(5,2),
@@ -272,12 +328,14 @@ CREATE TABLE IF NOT EXISTS pilotage.task_progress (
     CONSTRAINT uq_task_progress_task UNIQUE (task_id)
 );
 CREATE INDEX IF NOT EXISTS idx_task_progress_tenant_id ON pilotage.task_progress(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_task_progress_team_id   ON pilotage.task_progress(team_id);
 
 -- --- baseline : 0..10 par projet + baseline_snapshot (fige par tache) ---------------------
 -- UNIQUE (project_id, baseline_index) + CHECK baseline_index 0..10.
 CREATE TABLE IF NOT EXISTS pilotage.baseline (
     id             BIGINT      GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     tenant_id      BIGINT      NOT NULL REFERENCES public.tenants(id),
+    team_id        BIGINT      NOT NULL REFERENCES public.teams(id),
     project_id     BIGINT      NOT NULL REFERENCES pilotage.project(id) ON DELETE CASCADE,
     baseline_index SMALLINT    NOT NULL,
     captured_at    TIMESTAMPTZ NOT NULL,
@@ -287,11 +345,13 @@ CREATE TABLE IF NOT EXISTS pilotage.baseline (
     CONSTRAINT uq_baseline_project_index UNIQUE (project_id, baseline_index)
 );
 CREATE INDEX IF NOT EXISTS idx_baseline_tenant_id  ON pilotage.baseline(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_baseline_team_id    ON pilotage.baseline(team_id);
 CREATE INDEX IF NOT EXISTS idx_baseline_project_id ON pilotage.baseline(project_id);
 
 CREATE TABLE IF NOT EXISTS pilotage.baseline_snapshot (
     id                    BIGINT        GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     tenant_id             BIGINT        NOT NULL REFERENCES public.tenants(id),
+    team_id               BIGINT        NOT NULL REFERENCES public.teams(id),
     baseline_id           BIGINT        NOT NULL REFERENCES pilotage.baseline(id) ON DELETE CASCADE,
     task_id               BIGINT        NOT NULL REFERENCES pilotage.task(id) ON DELETE CASCADE,
     bl_start              TIMESTAMPTZ,
@@ -307,6 +367,7 @@ CREATE TABLE IF NOT EXISTS pilotage.baseline_snapshot (
                OR bl_temporal_precision IN ('SEMESTER', 'QUARTER', 'MONTH', 'WEEK', 'DAY'))
 );
 CREATE INDEX IF NOT EXISTS idx_baseline_snapshot_tenant_id   ON pilotage.baseline_snapshot(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_baseline_snapshot_team_id     ON pilotage.baseline_snapshot(team_id);
 CREATE INDEX IF NOT EXISTS idx_baseline_snapshot_baseline_id ON pilotage.baseline_snapshot(baseline_id);
 CREATE INDEX IF NOT EXISTS idx_baseline_snapshot_task_id     ON pilotage.baseline_snapshot(task_id);
 
@@ -319,21 +380,51 @@ CREATE INDEX IF NOT EXISTS idx_baseline_snapshot_task_id     ON pilotage.baselin
 -- substitution (aucun changement des consommateurs E22/E03).
 --
 -- Cette table porte l'OVERRIDE OPTIONNEL en base : UN SEUL profil par tenant (UNIQUE
--- tenant_id). Absente => la resolution retombe sur le DEFAUT VERSIONNE (constantes /
--- @ConfigurationProperties `pivot.profile.default.*`, resolu a la volee — jamais de ligne
--- fantome ecrite). tenant_id inexistant (pas de public.tenants) => TenantNotFoundException
--- (404 equivalent) cote service, jamais de profil fabrique.
+-- tenant_id — inchange par le retrofit team_id ci-dessous). Absente => la resolution retombe
+-- sur le DEFAUT VERSIONNE (constantes / @ConfigurationProperties `pivot.profile.default.*`,
+-- resolu a la volee — jamais de ligne fantome ecrite). tenant_id inexistant (pas de
+-- public.tenants) => TenantNotFoundException (404 equivalent) cote service, jamais de profil
+-- fabrique.
+--
+-- Retrofit team_id (ecart EN18.10 #1, cf. bandeau en tete de fichier) : team_id BIGINT NOT
+-- NULL REFERENCES public.teams(id) + index dedie ajoutes ICI AUSSI, MAIS avec une semantique
+-- differente des autres tables de ce fichier : ce profil reste un contrat resolu PAR TENANT
+-- (resolveProfile(tenant) — contrat fige EN22.1c/E22/E03, substituable par E40 SANS changer sa
+-- signature, cf. en-profil-organisation-defaut.md "resolveProfile(tenant) ... signature
+-- identique a celle qu'implementera E40"). team_id ne participe donc PAS a la cle de
+-- resolution/unicite (UNIQUE reste (tenant_id) seul) : il porte l'equipe pour le compte de
+-- laquelle l'override a ete demande (attribution/audit), exigee par le nouvel endpoint
+-- d'ecriture PUT /api/pilotage/organization-profile/{tenantId} (corps JSON incluant teamId) —
+-- pas une dimension de filtrage supplementaire. Faire de team_id une cle de resolution
+-- casserait le contrat fige consomme par E22 (DefaultAltitudeProvider)/E03 sans justification
+-- fonctionnelle (le profil de gouvernance — altitude/souverainete/rigueur — est une politique
+-- d'ORGANISATION, pas une variation par equipe) ; documente explicitement ici pour ne pas
+-- rouvrir le sujet sans coordination E22/E03/E40.
 --
 -- default_modules en JSONB (@JdbcTypeCode(SqlTypes.JSON) cote JPA) : l'ensemble par defaut
 -- des modules. L'activation REELLE des modules reste propriete de pivot-core (E03/registre),
 -- cablee via pivot-core-starter (gap TODO-SETUP §5) — ici on ne PORTE que l'ensemble.
+--
+-- Vocabulaire de souverainete (ecart EN18.10 #2) : sovereignty_class utilisait NEUTRAL /
+-- RESTRICTED / SOVEREIGN, incoherent avec ADR-015 (zones A souveraine / B controlee / C DMZ
+-- externe). Renomme en ZONE_A_SOUVERAINE / ZONE_B_CONTROLEE / ZONE_C_DMZ_EXTERNE. Mapping
+-- retenu (documente aussi dans SovereigntyClass.java) : SOVEREIGN -> ZONE_A_SOUVERAINE (racine
+-- lexicale commune, contraintes de souverainete strictes = zone A "self-host/air-gap") ;
+-- NEUTRAL -> ZONE_B_CONTROLEE (c'est aussi le DEFAUT VERSIONNE : "classe la plus neutre" =
+-- fonctionnement SaaS standard, tenant UE/VPC controle — PAS la zone A, disproportionnellement
+-- restrictive pour un defaut universel, ni la zone C, reservee aux connexions API tierces/DMZ,
+-- inappropriee comme posture par defaut) ; RESTRICTED -> ZONE_C_DMZ_EXTERNE (par elimination,
+-- posture d'exposition externe explicite).
+--
 -- Enums (altitude/sovereignty_class/rigor_level) stockes en VARCHAR + CHECK (convention
 -- pivot : @Enumerated STRING). FK tenant_id vers public.tenants(id), NOT NULL, indexee via
--- l'index unique. Aucune FK sortante hors public.tenants (ADR-006).
+-- l'index unique ; FK team_id vers public.teams(id), NOT NULL, indexee separement. Aucune FK
+-- sortante hors public.tenants/public.teams (ADR-006).
 -- =====================================================================================
 CREATE TABLE IF NOT EXISTS pilotage.organization_profile (
     id                BIGINT      GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     tenant_id         BIGINT      NOT NULL REFERENCES public.tenants(id),
+    team_id           BIGINT      NOT NULL REFERENCES public.teams(id),
     altitude          VARCHAR(16) NOT NULL,
     sovereignty_class VARCHAR(16) NOT NULL,
     rigor_level       VARCHAR(16) NOT NULL,
@@ -343,9 +434,11 @@ CREATE TABLE IF NOT EXISTS pilotage.organization_profile (
     CONSTRAINT uq_organization_profile_tenant UNIQUE (tenant_id),
     CONSTRAINT chk_organization_profile_altitude CHECK (altitude IN ('MACRO', 'DETAIL')),
     CONSTRAINT chk_organization_profile_sovereignty_class
-        CHECK (sovereignty_class IN ('NEUTRAL', 'RESTRICTED', 'SOVEREIGN')),
+        CHECK (sovereignty_class IN ('ZONE_A_SOUVERAINE', 'ZONE_B_CONTROLEE', 'ZONE_C_DMZ_EXTERNE')),
     CONSTRAINT chk_organization_profile_rigor_level
         CHECK (rigor_level IN ('LIGHT', 'STANDARD', 'STRICT'))
 );
 CREATE INDEX IF NOT EXISTS idx_organization_profile_tenant_id
     ON pilotage.organization_profile(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_organization_profile_team_id
+    ON pilotage.organization_profile(team_id);
