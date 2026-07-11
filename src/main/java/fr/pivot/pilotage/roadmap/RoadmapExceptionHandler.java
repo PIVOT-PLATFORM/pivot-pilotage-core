@@ -86,4 +86,26 @@ class RoadmapExceptionHandler {
     ResponseEntity<Void> handleForbidden(final RoadmapEditForbiddenException ex) {
         return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
     }
+
+    /**
+     * Maps an unresolved milestone to a bodyless 404 — same non-disclosure posture (US22.3.4).
+     *
+     * @param ex the thrown exception
+     * @return a bodyless 404 response
+     */
+    @ExceptionHandler(MilestoneNotFoundException.class)
+    ResponseEntity<Void> handleMilestoneNotFound(final MilestoneNotFoundException ex) {
+        return ResponseEntity.notFound().build();
+    }
+
+    /**
+     * Maps a missing/out-of-bounds milestone date to 400 with a caller-facing message (US22.3.4).
+     *
+     * @param ex the thrown exception
+     * @return a 400 response carrying an {@link ApiError} body
+     */
+    @ExceptionHandler(InvalidMilestoneDateException.class)
+    ResponseEntity<ApiError> handleInvalidMilestoneDate(final InvalidMilestoneDateException ex) {
+        return ResponseEntity.badRequest().body(new ApiError(ex.code(), ex.getMessage()));
+    }
 }

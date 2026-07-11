@@ -293,4 +293,150 @@ class RoadmapControllerIT {
                         .content("{}"))
                 .andExpect(status().isNotFound());
     }
+
+    // -------- milestones (US22.3.4): read -----------------------------------------------------------
+
+    @Test
+    void listMilestones_returnsServiceResultAsJson() throws Exception {
+        when(roadmapService.listMilestones(TENANT, TEAM, PROJECT)).thenReturn(List.of(
+                new MilestoneResponse(1L, null, "Go/No-Go", java.time.LocalDate.of(2026, 6, 1),
+                        TemporalPrecision.DAY, 0)));
+
+        mockMvc.perform(get(BASE_PATH + "/milestones"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].name").value("Go/No-Go"))
+                .andExpect(jsonPath("$[0].date").value("2026-06-01"));
+    }
+
+    @Test
+    void listMilestones_unknownProject_returns404() throws Exception {
+        when(roadmapService.listMilestones(TENANT, TEAM, PROJECT))
+                .thenThrow(new ProjectNotFoundException(PROJECT, TENANT, TEAM));
+
+        mockMvc.perform(get(BASE_PATH + "/milestones")).andExpect(status().isNotFound());
+    }
+
+    // -------- milestones (US22.3.4): create ---------------------------------------------------------
+
+    @Test
+    void createMilestone_authorized_returns201AndInvokesService() throws Exception {
+        when(editPolicy.isAuthorized()).thenReturn(true);
+        when(roadmapService.createMilestone(eq(TENANT), eq(TEAM), eq(PROJECT), any(CreateMilestoneRequest.class)))
+                .thenReturn(new MilestoneResponse(1L, null, "Go/No-Go", java.time.LocalDate.of(2026, 6, 1),
+                        TemporalPrecision.DAY, 0));
+
+        mockMvc.perform(post(BASE_PATH + "/milestones")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"Go/No-Go\",\"date\":\"2026-06-01\"}"))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.name").value("Go/No-Go"));
+    }
+
+    @Test
+    void createMilestone_notAuthorized_returns403AndNeverInvokesService() throws Exception {
+        when(editPolicy.isAuthorized()).thenReturn(false);
+
+        mockMvc.perform(post(BASE_PATH + "/milestones")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"Go/No-Go\",\"date\":\"2026-06-01\"}"))
+                .andExpect(status().isForbidden());
+
+        verify(roadmapService, never()).createMilestone(anyLong(), anyLong(), anyLong(), any());
+    }
+
+    @Test
+    void createMilestone_blankName_returns400() throws Exception {
+        when(editPolicy.isAuthorized()).thenReturn(true);
+
+        mockMvc.perform(post(BASE_PATH + "/milestones")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"\",\"date\":\"2026-06-01\"}"))
+                .andExpect(status().isBadRequest());
+
+        verify(roadmapService, never()).createMilestone(anyLong(), anyLong(), anyLong(), any());
+    }
+
+    // -------- Error case: a milestone without a date is rejected with a message --------------------
+
+    @Test
+    void createMilestone_missingDate_returns400WithDateRequiredMessage() throws Exception {
+        when(editPolicy.isAuthorized()).thenReturn(true);
+        when(roadmapService.createMilestone(eq(TENANT), eq(TEAM), eq(PROJECT), any(CreateMilestoneRequest.class)))
+                .thenThrow(InvalidMilestoneDateException.missing(PROJECT));
+
+        mockMvc.perform(post(BASE_PATH + "/milestones")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"Go/No-Go\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("MILESTONE_DATE_REQUIRED"))
+                .andExpect(content().string(containsString("date")));
+    }
+
+    @Test
+    void createMilestone_dateOutOfBounds_returns400WithBody() throws Exception {
+        when(editPolicy.isAuthorized()).thenReturn(true);
+        when(roadmapService.createMilestone(eq(TENANT), eq(TEAM), eq(PROJECT), any(CreateMilestoneRequest.class)))
+                .thenThrow(InvalidMilestoneDateException.outOfBounds(java.time.LocalDate.of(2020, 1, 1), PROJECT,
+                        java.time.LocalDate.of(2026, 1, 1), java.time.LocalDate.of(2026, 12, 31)));
+
+        mockMvc.perform(post(BASE_PATH + "/milestones")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"Go/No-Go\",\"date\":\"2020-01-01\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("MILESTONE_DATE_OUT_OF_BOUNDS"));
+    }
+
+    @Test
+    void createMilestone_invalidLane_returns400WithBody() throws Exception {
+        when(editPolicy.isAuthorized()).thenReturn(true);
+        when(roadmapService.createMilestone(eq(TENANT), eq(TEAM), eq(PROJECT), any(CreateMilestoneRequest.class)))
+                .thenThrow(LaneNotFoundException.invalid(999L, PROJECT));
+
+        mockMvc.perform(post(BASE_PATH + "/milestones")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"Go/No-Go\",\"date\":\"2026-06-01\",\"laneId\":999}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("LANE_NOT_FOUND"));
+    }
+
+    // -------- milestones (US22.3.4): move -----------------------------------------------------------
+
+    @Test
+    void updateMilestone_authorized_returns200AndInvokesService() throws Exception {
+        when(editPolicy.isAuthorized()).thenReturn(true);
+        when(roadmapService.updateMilestone(eq(TENANT), eq(TEAM), eq(PROJECT), eq(7L),
+                any(UpdateMilestoneRequest.class)))
+                .thenReturn(new MilestoneResponse(7L, null, "Go/No-Go", java.time.LocalDate.of(2026, 7, 1),
+                        TemporalPrecision.DAY, 1));
+
+        mockMvc.perform(patch(BASE_PATH + "/milestones/7")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"date\":\"2026-07-01\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.revision").value(1));
+    }
+
+    @Test
+    void updateMilestone_notAuthorized_returns403AndNeverInvokesService() throws Exception {
+        when(editPolicy.isAuthorized()).thenReturn(false);
+
+        mockMvc.perform(patch(BASE_PATH + "/milestones/7")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{}"))
+                .andExpect(status().isForbidden());
+
+        verify(roadmapService, never()).updateMilestone(anyLong(), anyLong(), anyLong(), anyLong(), any());
+    }
+
+    @Test
+    void updateMilestone_unknownMilestone_returns404() throws Exception {
+        when(editPolicy.isAuthorized()).thenReturn(true);
+        doThrow(new MilestoneNotFoundException(999L, PROJECT))
+                .when(roadmapService).updateMilestone(eq(TENANT), eq(TEAM), eq(PROJECT), eq(999L), any());
+
+        mockMvc.perform(patch(BASE_PATH + "/milestones/999")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{}"))
+                .andExpect(status().isNotFound());
+    }
 }

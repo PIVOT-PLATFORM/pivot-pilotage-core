@@ -77,6 +77,36 @@ class RoadmapServiceTest {
         return task;
     }
 
+    /**
+     * Builds a plain initiative-like task carrying an explicit fuzzy period, used to seed the
+     * project's temporal footprint that milestone bounds are derived from.
+     */
+    private static Task datedTask(final long id, final LocalDate start, final LocalDate end) {
+        final Task task = new Task(TENANT, TEAM, PROJECT, 0, "Other", NodeKind.LEAF, Boolean.TRUE,
+                TemporalPrecision.QUARTER, 0);
+        task.setFuzzyPeriodStart(start);
+        task.setFuzzyPeriodEnd(end);
+        setId(task, id);
+        return task;
+    }
+
+    private static Task milestone(final long id, final Long laneId, final int position, final String name,
+            final LocalDate date) {
+        final Task task = new Task(TENANT, TEAM, PROJECT, position, name, NodeKind.MILESTONE, Boolean.TRUE,
+                TemporalPrecision.DAY, 0);
+        task.setLaneId(laneId);
+        task.setDurationMinutes(0);
+        if (date != null) {
+            task.setFuzzyPeriodStart(date);
+            task.setFuzzyPeriodEnd(date);
+            final java.time.Instant atMidnightUtc = date.atStartOfDay(java.time.ZoneOffset.UTC).toInstant();
+            task.setStartDate(atMidnightUtc);
+            task.setFinishDate(atMidnightUtc);
+        }
+        setId(task, id);
+        return task;
+    }
+
     // ---- project resolution shared by every operation ------------------------------------------
 
     @Test
@@ -350,6 +380,262 @@ class RoadmapServiceTest {
                 () -> service.updatePlacement(TENANT, TEAM, PROJECT, 50L,
                         new UpdateInitiativePlacementRequest(null, LocalDate.of(2026, 1, 1), null)));
 
+        verify(taskRepository, never()).save(any());
+    }
+
+    // ---- milestones (US22.3.4): listing -----------------------------------------------------------
+
+    @Test
+    void listMilestones_sortsByDateThenId() {
+        when(taskRepository.findAllByProjectIdAndTenantIdAndTeamIdAndNodeKind(PROJECT, TENANT, TEAM,
+                NodeKind.MILESTONE)).thenReturn(List.of(
+                        milestone(30L, null, 0, "Later one", LocalDate.of(2026, 6, 1)),
+                        milestone(31L, null, 1, "Earliest", LocalDate.of(2026, 1, 1)),
+                        milestone(32L, null, 2, "Undated", null)));
+
+        final List<MilestoneResponse> result = service.listMilestones(TENANT, TEAM, PROJECT);
+
+        assertThat(result).extracting(MilestoneResponse::name)
+                .containsExactly("Earliest", "Later one", "Undated");
+    }
+
+    @Test
+    void listMilestones_none_returnsEmptyList() {
+        when(taskRepository.findAllByProjectIdAndTenantIdAndTeamIdAndNodeKind(PROJECT, TENANT, TEAM,
+                NodeKind.MILESTONE)).thenReturn(List.of());
+
+        assertThat(service.listMilestones(TENANT, TEAM, PROJECT)).isEmpty();
+    }
+
+    // ---- milestones (US22.3.4): creation -----------------------------------------------------------
+
+    @Test
+    void createMilestone_noOtherProjectData_anyDateAccepted_populatesBothTemporalRepresentations() {
+        when(taskRepository.findAllByProjectIdAndTenantIdAndTeamId(PROJECT, TENANT, TEAM)).thenReturn(List.of());
+        when(taskRepository.countByProjectIdAndTenantIdAndTeamIdAndNodeKind(PROJECT, TENANT, TEAM, NodeKind.MILESTONE))
+                .thenReturn(0L);
+        final Task[] captured = new Task[1];
+        when(taskRepository.save(any(Task.class))).thenAnswer(inv -> {
+            final Task saved = inv.getArgument(0);
+            setId(saved, 70L);
+            captured[0] = saved;
+            return saved;
+        });
+        final LocalDate date = LocalDate.of(2026, 9, 15);
+
+        final MilestoneResponse response = service.createMilestone(TENANT, TEAM, PROJECT,
+                new CreateMilestoneRequest("Go/No-Go", date, null));
+
+        assertThat(response.id()).isEqualTo(70L);
+        assertThat(response.laneId()).isNull();
+        assertThat(response.name()).isEqualTo("Go/No-Go");
+        assertThat(response.date()).isEqualTo(date);
+        assertThat(response.temporalPrecision()).isEqualTo(TemporalPrecision.DAY);
+        assertThat(response.revision()).isZero();
+        // Same object, no transformation for a future Gantt consumer: precise bounds populated too.
+        assertThat(captured[0].getStartDate()).isEqualTo(date.atStartOfDay(java.time.ZoneOffset.UTC).toInstant());
+        assertThat(captured[0].getFinishDate()).isEqualTo(captured[0].getStartDate());
+        assertThat(captured[0].getDurationMinutes()).isZero();
+        assertThat(captured[0].getNodeKind()).isEqualTo(NodeKind.MILESTONE);
+    }
+
+    @Test
+    void createMilestone_withLane_persistsLaneId() {
+        when(laneRepository.findByIdAndProjectIdAndTenantIdAndTeamId(1L, PROJECT, TENANT, TEAM))
+                .thenReturn(Optional.of(lane(1L, "Lane A", 0)));
+        when(taskRepository.findAllByProjectIdAndTenantIdAndTeamId(PROJECT, TENANT, TEAM)).thenReturn(List.of());
+        when(taskRepository.countByProjectIdAndTenantIdAndTeamIdAndNodeKind(PROJECT, TENANT, TEAM, NodeKind.MILESTONE))
+                .thenReturn(1L);
+        when(taskRepository.save(any(Task.class))).thenAnswer(inv -> {
+            final Task saved = inv.getArgument(0);
+            setId(saved, 71L);
+            return saved;
+        });
+
+        final MilestoneResponse response = service.createMilestone(TENANT, TEAM, PROJECT,
+                new CreateMilestoneRequest("Beta launch", LocalDate.of(2026, 5, 1), 1L));
+
+        assertThat(response.laneId()).isEqualTo(1L);
+    }
+
+    @Test
+    void createMilestone_noDate_throwsInvalidMilestoneDateMissing() {
+        final InvalidMilestoneDateException ex = Assertions.assertThrows(InvalidMilestoneDateException.class,
+                () -> service.createMilestone(TENANT, TEAM, PROJECT,
+                        new CreateMilestoneRequest("No date", null, null)));
+
+        assertThat(ex.code()).isEqualTo(InvalidMilestoneDateException.CODE_REQUIRED);
+        verify(taskRepository, never()).save(any());
+    }
+
+    @Test
+    void createMilestone_unknownLane_throwsLaneNotFound() {
+        when(laneRepository.findByIdAndProjectIdAndTenantIdAndTeamId(999L, PROJECT, TENANT, TEAM))
+                .thenReturn(Optional.empty());
+
+        assertThatExceptionOfType(LaneNotFoundException.class).isThrownBy(() ->
+                service.createMilestone(TENANT, TEAM, PROJECT,
+                        new CreateMilestoneRequest("X", LocalDate.of(2026, 1, 1), 999L)));
+
+        verify(taskRepository, never()).save(any());
+    }
+
+    @Test
+    void createMilestone_dateWithinExistingProjectFootprint_isAccepted() {
+        when(taskRepository.findAllByProjectIdAndTenantIdAndTeamId(PROJECT, TENANT, TEAM)).thenReturn(
+                List.of(datedTask(20L, LocalDate.of(2026, 1, 1), LocalDate.of(2026, 12, 31))));
+        when(taskRepository.countByProjectIdAndTenantIdAndTeamIdAndNodeKind(PROJECT, TENANT, TEAM, NodeKind.MILESTONE))
+                .thenReturn(0L);
+        when(taskRepository.save(any(Task.class))).thenAnswer(inv -> {
+            final Task saved = inv.getArgument(0);
+            setId(saved, 72L);
+            return saved;
+        });
+
+        final MilestoneResponse response = service.createMilestone(TENANT, TEAM, PROJECT,
+                new CreateMilestoneRequest("Mid-year review", LocalDate.of(2026, 6, 15), null));
+
+        assertThat(response.date()).isEqualTo(LocalDate.of(2026, 6, 15));
+    }
+
+    @Test
+    void createMilestone_dateBeforeProjectFootprint_throwsOutOfBounds() {
+        when(taskRepository.findAllByProjectIdAndTenantIdAndTeamId(PROJECT, TENANT, TEAM)).thenReturn(
+                List.of(datedTask(20L, LocalDate.of(2026, 1, 1), LocalDate.of(2026, 12, 31))));
+
+        final InvalidMilestoneDateException ex = Assertions.assertThrows(InvalidMilestoneDateException.class,
+                () -> service.createMilestone(TENANT, TEAM, PROJECT,
+                        new CreateMilestoneRequest("Too early", LocalDate.of(2025, 12, 31), null)));
+
+        assertThat(ex.code()).isEqualTo(InvalidMilestoneDateException.CODE_OUT_OF_BOUNDS);
+        verify(taskRepository, never()).save(any());
+    }
+
+    @Test
+    void createMilestone_dateAfterProjectFootprint_throwsOutOfBounds() {
+        when(taskRepository.findAllByProjectIdAndTenantIdAndTeamId(PROJECT, TENANT, TEAM)).thenReturn(
+                List.of(datedTask(20L, LocalDate.of(2026, 1, 1), LocalDate.of(2026, 12, 31))));
+
+        final InvalidMilestoneDateException ex = Assertions.assertThrows(InvalidMilestoneDateException.class,
+                () -> service.createMilestone(TENANT, TEAM, PROJECT,
+                        new CreateMilestoneRequest("Too late", LocalDate.of(2027, 1, 1), null)));
+
+        assertThat(ex.code()).isEqualTo(InvalidMilestoneDateException.CODE_OUT_OF_BOUNDS);
+        verify(taskRepository, never()).save(any());
+    }
+
+    // ---- milestones (US22.3.4): move/update ------------------------------------------------------
+
+    @Test
+    void updateMilestone_dateOnly_updatesBothRepresentationsAndBumpsRevision() {
+        final Task existing = milestone(80L, null, 0, "Launch", LocalDate.of(2026, 3, 1));
+        when(taskRepository.findByIdAndProjectIdAndTenantIdAndTeamId(80L, PROJECT, TENANT, TEAM))
+                .thenReturn(Optional.of(existing));
+        when(taskRepository.findAllByProjectIdAndTenantIdAndTeamId(PROJECT, TENANT, TEAM))
+                .thenReturn(List.of(existing));
+        when(taskRepository.save(any(Task.class))).thenAnswer(inv -> inv.getArgument(0));
+        final LocalDate newDate = LocalDate.of(2026, 4, 1);
+
+        final MilestoneResponse response = service.updateMilestone(TENANT, TEAM, PROJECT, 80L,
+                new UpdateMilestoneRequest(newDate, null));
+
+        assertThat(response.date()).isEqualTo(newDate);
+        assertThat(response.revision()).isEqualTo(1);
+    }
+
+    @Test
+    void updateMilestone_isNeverBoundedByItsOwnPreviousDate() {
+        // The milestone is the ONLY dated element on the project; moving it must never be rejected
+        // as "out of its own bounds" — the envelope excludes the task being moved.
+        final Task existing = milestone(81L, null, 0, "Launch", LocalDate.of(2026, 3, 1));
+        when(taskRepository.findByIdAndProjectIdAndTenantIdAndTeamId(81L, PROJECT, TENANT, TEAM))
+                .thenReturn(Optional.of(existing));
+        when(taskRepository.findAllByProjectIdAndTenantIdAndTeamId(PROJECT, TENANT, TEAM))
+                .thenReturn(List.of(existing));
+        when(taskRepository.save(any(Task.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        final MilestoneResponse response = service.updateMilestone(TENANT, TEAM, PROJECT, 81L,
+                new UpdateMilestoneRequest(LocalDate.of(2030, 1, 1), null));
+
+        assertThat(response.date()).isEqualTo(LocalDate.of(2030, 1, 1));
+    }
+
+    @Test
+    void updateMilestone_laneOnly_reassignsLaneAndBumpsRevision() {
+        final Task existing = milestone(82L, null, 0, "Launch", LocalDate.of(2026, 3, 1));
+        when(taskRepository.findByIdAndProjectIdAndTenantIdAndTeamId(82L, PROJECT, TENANT, TEAM))
+                .thenReturn(Optional.of(existing));
+        when(laneRepository.findByIdAndProjectIdAndTenantIdAndTeamId(2L, PROJECT, TENANT, TEAM))
+                .thenReturn(Optional.of(lane(2L, "Lane B", 1)));
+        when(taskRepository.save(any(Task.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        final MilestoneResponse response = service.updateMilestone(TENANT, TEAM, PROJECT, 82L,
+                new UpdateMilestoneRequest(null, 2L));
+
+        assertThat(response.laneId()).isEqualTo(2L);
+        assertThat(response.revision()).isEqualTo(1);
+    }
+
+    @Test
+    void updateMilestone_emptyRequest_isNoOpAndRevisionUnchanged() {
+        final Task existing = milestone(83L, null, 0, "Launch", LocalDate.of(2026, 3, 1));
+        when(taskRepository.findByIdAndProjectIdAndTenantIdAndTeamId(83L, PROJECT, TENANT, TEAM))
+                .thenReturn(Optional.of(existing));
+        when(taskRepository.save(any(Task.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        final MilestoneResponse response = service.updateMilestone(TENANT, TEAM, PROJECT, 83L,
+                new UpdateMilestoneRequest(null, null));
+
+        assertThat(response.revision()).isZero();
+    }
+
+    @Test
+    void updateMilestone_unknownMilestone_throwsMilestoneNotFound() {
+        when(taskRepository.findByIdAndProjectIdAndTenantIdAndTeamId(999L, PROJECT, TENANT, TEAM))
+                .thenReturn(Optional.empty());
+
+        assertThatExceptionOfType(MilestoneNotFoundException.class).isThrownBy(() ->
+                service.updateMilestone(TENANT, TEAM, PROJECT, 999L, new UpdateMilestoneRequest(null, null)));
+    }
+
+    @Test
+    void updateMilestone_taskThatIsNotAMilestone_throwsMilestoneNotFound() {
+        final Task plainInitiative = initiative(90L, 1L, 0, "Initiative, not a milestone");
+        when(taskRepository.findByIdAndProjectIdAndTenantIdAndTeamId(90L, PROJECT, TENANT, TEAM))
+                .thenReturn(Optional.of(plainInitiative));
+
+        assertThatExceptionOfType(MilestoneNotFoundException.class).isThrownBy(() ->
+                service.updateMilestone(TENANT, TEAM, PROJECT, 90L, new UpdateMilestoneRequest(null, null)));
+    }
+
+    @Test
+    void updateMilestone_unknownLane_throwsLaneNotFound() {
+        final Task existing = milestone(84L, null, 0, "Launch", LocalDate.of(2026, 3, 1));
+        when(taskRepository.findByIdAndProjectIdAndTenantIdAndTeamId(84L, PROJECT, TENANT, TEAM))
+                .thenReturn(Optional.of(existing));
+        when(laneRepository.findByIdAndProjectIdAndTenantIdAndTeamId(eq(999L), eq(PROJECT), eq(TENANT), eq(TEAM)))
+                .thenReturn(Optional.empty());
+
+        assertThatExceptionOfType(LaneNotFoundException.class).isThrownBy(() ->
+                service.updateMilestone(TENANT, TEAM, PROJECT, 84L, new UpdateMilestoneRequest(null, 999L)));
+
+        verify(taskRepository, never()).save(any());
+    }
+
+    @Test
+    void updateMilestone_dateOutOfOtherTasksBounds_throwsOutOfBounds() {
+        final Task existing = milestone(85L, null, 0, "Launch", LocalDate.of(2026, 3, 1));
+        final Task sibling = datedTask(21L, LocalDate.of(2026, 1, 1), LocalDate.of(2026, 12, 31));
+        when(taskRepository.findByIdAndProjectIdAndTenantIdAndTeamId(85L, PROJECT, TENANT, TEAM))
+                .thenReturn(Optional.of(existing));
+        when(taskRepository.findAllByProjectIdAndTenantIdAndTeamId(PROJECT, TENANT, TEAM))
+                .thenReturn(List.of(existing, sibling));
+
+        final InvalidMilestoneDateException ex = Assertions.assertThrows(InvalidMilestoneDateException.class,
+                () -> service.updateMilestone(TENANT, TEAM, PROJECT, 85L,
+                        new UpdateMilestoneRequest(LocalDate.of(2027, 6, 1), null)));
+
+        assertThat(ex.code()).isEqualTo(InvalidMilestoneDateException.CODE_OUT_OF_BOUNDS);
         verify(taskRepository, never()).save(any());
     }
 }
