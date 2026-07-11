@@ -493,3 +493,57 @@ CREATE INDEX IF NOT EXISTS idx_lane_project_id ON pilotage.lane(project_id);
 ALTER TABLE pilotage.task
     ADD COLUMN IF NOT EXISTS lane_id BIGINT REFERENCES pilotage.lane(id);
 CREATE INDEX IF NOT EXISTS idx_task_lane_id ON pilotage.task(lane_id);
+
+-- =====================================================================================
+-- US22.3.5 — Partage & export de la roadmap : lien de partage lecture seule.
+--
+-- Decision PO Agent + Architecte (fiche backlog sous-specifiee niveau technique -- "Notes
+-- d'implementation" : "le lien de partage lecture seule necessite un mecanisme de
+-- token/permission dedie") : nouvelle petite table dediee, hors du graphe temporel
+-- (pilotage.task/lane) -- un lien de partage n'est pas une donnee de planning mais un
+-- mecanisme d'acces. Replique exactement le pattern pivot-core public.access_tokens (cf.
+-- fr.pivot.auth.entity.AccessToken / fr.pivot.auth.util.CryptoUtils.sha256) : le token BRUT
+-- (256 bits SecureRandom, hex-encode 64 caracteres) n'est JAMAIS persiste, seul son hash
+-- SHA-256 (token_hash, 64 hex chars) l'est -- meme discipline, pas de sel necessaire (le token
+-- est deja une valeur aleatoire opaque a haute entropie, jamais un secret utilisateur a faible
+-- entropie type mot de passe/OTP).
+--
+-- Portee stricte du lien : project_id NOT NULL (jamais un lien "portefeuille" ou "tenant"
+-- entier) -- l'AC securite ("le lien ne doit exposer que les donnees de la roadmap
+-- concernee") est imposee des le schema : ON DELETE CASCADE avec pilotage.project (un lien de
+-- partage n'a plus de sens si son projet est supprime).
+--
+-- Contrairement aux autres tables pilotage.* de ce fichier, PAS de colonne updated_at : un lien
+-- de partage n'est jamais "modifie" au sens metier -- seul un evenement ponctuel (revocation,
+-- capture par revoked_at) peut lui arriver, exactement le modele de
+-- fr.pivot.auth.entity.AccessToken (created_at/revoked_at/rotated_at, pas d'updated_at).
+--
+-- revoked_at NULLABLE (NULL = jamais revoque) et expires_at NULLABLE (NULL = pas d'expiration
+-- programmee, revocation manuelle uniquement) -- les deux mecanismes de fin de vie coexistent
+-- et sont independants, verifies ensemble cote service (isActive() = revoked_at IS NULL AND
+-- (expires_at IS NULL OR expires_at > now())).
+--
+-- token_hash UNIQUE : deux liens ne peuvent jamais partager le meme hash (collision
+-- statistiquement nulle sur 256 bits, mais la contrainte protege aussi contre un bug de
+-- generation qui reutiliserait l'entropie).
+--
+-- tenant_id/team_id dupliques sur la table (meme principe de duplication deliberee que toutes
+-- les autres tables pilotage.* de ce fichier) : permet un filtrage direct des liens d'un projet
+-- sans jointure, utilise par la gestion authentifiee (lister/revoquer, gate RoadmapEditPolicy)
+-- -- jamais utilise par la voie de consultation publique (par token), qui ne connait au depart
+-- que le token, pas le tenant/team/project.
+-- =====================================================================================
+CREATE TABLE IF NOT EXISTS pilotage.roadmap_share_link (
+    id         BIGINT      GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    tenant_id  BIGINT      NOT NULL REFERENCES public.tenants(id),
+    team_id    BIGINT      NOT NULL REFERENCES public.teams(id),
+    project_id BIGINT      NOT NULL REFERENCES pilotage.project(id) ON DELETE CASCADE,
+    token_hash VARCHAR(64) NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    revoked_at TIMESTAMPTZ,
+    expires_at TIMESTAMPTZ,
+    CONSTRAINT uq_roadmap_share_link_token_hash UNIQUE (token_hash)
+);
+CREATE INDEX IF NOT EXISTS idx_roadmap_share_link_tenant_id  ON pilotage.roadmap_share_link(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_roadmap_share_link_team_id    ON pilotage.roadmap_share_link(team_id);
+CREATE INDEX IF NOT EXISTS idx_roadmap_share_link_project_id ON pilotage.roadmap_share_link(project_id);
