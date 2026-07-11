@@ -1,20 +1,17 @@
 package fr.pivot.pilotage.schedule.projection;
 
-import org.springframework.stereotype.Component;
-
 /**
  * Minimal, tenant-agnostic {@link DefaultAltitudeProvider} that always returns the macro altitude
  * (EN22.1c).
  *
- * <p><strong>Temporary stand-in for EN18.10.</strong> The frozen contract routes the default view
- * altitude through {@code resolveProfile(tenant).altitude}; that profile service (EN18.10) is not
- * yet implemented. This component makes the projection layer functional today by returning a fixed
- * macro default (the {@code QUARTER}-grained roadmap opening notch, expressed here as
- * {@link Altitude#MACRO}). <strong>EN18.10 will replace this bean</strong> with a profile-backed
- * implementation of {@link DefaultAltitudeProvider}, substitutable via E40, without any change to
- * {@link PlanProjectionService}.
+ * <p><strong>Test/bootstrap fallback (EN18.10).</strong> This was the temporary stand-in until
+ * EN18.10 delivered {@link ProfileBackedAltitudeProvider}, now the active profile-backed default
+ * bean. This class is <strong>no longer a Spring component</strong>: it is retained as a fixed,
+ * dependency-free fallback for tests and bootstrap scenarios that need a deterministic macro
+ * altitude without wiring the resolver/database. It returns the fixed macro default (the roadmap
+ * opening notch, expressed here as {@link Altitude#MACRO}) — the same value the versioned default
+ * profile carries, which is what preserves the projection contract when the seam is swapped.
  */
-@Component
 public class FixedDefaultAltitudeProvider implements DefaultAltitudeProvider {
 
     /**

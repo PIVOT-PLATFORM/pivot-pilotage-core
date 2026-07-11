@@ -25,6 +25,11 @@
                  dépendances, contraintes, assignations, avancement) et baseline. -->
             <Package name="fr.pivot.pilotage.schedule"/>
             <Package name="fr.pivot.pilotage.baseline"/>
+            <!-- EN18.10 — entité JPA OrganizationProfile (override du profil par tenant) :
+                 getters/setters mutables exigés par Hibernate. Le record immuable
+                 DefaultOrganizationProfile et DefaultProfileProperties prennent au contraire des
+                 copies défensives (List/Set.copyOf) — pas concernés par cette exclusion. -->
+            <Package name="fr.pivot.pilotage.profile"/>
         </Or>
     </Match>
 

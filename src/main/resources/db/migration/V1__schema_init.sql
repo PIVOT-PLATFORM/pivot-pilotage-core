@@ -309,3 +309,43 @@ CREATE TABLE IF NOT EXISTS pilotage.baseline_snapshot (
 CREATE INDEX IF NOT EXISTS idx_baseline_snapshot_tenant_id   ON pilotage.baseline_snapshot(tenant_id);
 CREATE INDEX IF NOT EXISTS idx_baseline_snapshot_baseline_id ON pilotage.baseline_snapshot(baseline_id);
 CREATE INDEX IF NOT EXISTS idx_baseline_snapshot_task_id     ON pilotage.baseline_snapshot(task_id);
+
+-- =====================================================================================
+-- EN18.10 — Profil d'organisation par defaut (couture de decouplage E40).
+--
+-- Backing REEL du seam DefaultAltitudeProvider (EN22.1c) : resolveProfile(tenant) renvoie
+-- un DefaultOrganizationProfile { altitude, classe de souverainete, niveau de rigueur,
+-- modules par defaut }. Contrat de lecture STABLE, identique a ce qu'E40 implementera par
+-- substitution (aucun changement des consommateurs E22/E03).
+--
+-- Cette table porte l'OVERRIDE OPTIONNEL en base : UN SEUL profil par tenant (UNIQUE
+-- tenant_id). Absente => la resolution retombe sur le DEFAUT VERSIONNE (constantes /
+-- @ConfigurationProperties `pivot.profile.default.*`, resolu a la volee — jamais de ligne
+-- fantome ecrite). tenant_id inexistant (pas de public.tenants) => TenantNotFoundException
+-- (404 equivalent) cote service, jamais de profil fabrique.
+--
+-- default_modules en JSONB (@JdbcTypeCode(SqlTypes.JSON) cote JPA) : l'ensemble par defaut
+-- des modules. L'activation REELLE des modules reste propriete de pivot-core (E03/registre),
+-- cablee via pivot-core-starter (gap TODO-SETUP §5) — ici on ne PORTE que l'ensemble.
+-- Enums (altitude/sovereignty_class/rigor_level) stockes en VARCHAR + CHECK (convention
+-- pivot : @Enumerated STRING). FK tenant_id vers public.tenants(id), NOT NULL, indexee via
+-- l'index unique. Aucune FK sortante hors public.tenants (ADR-006).
+-- =====================================================================================
+CREATE TABLE IF NOT EXISTS pilotage.organization_profile (
+    id                BIGINT      GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    tenant_id         BIGINT      NOT NULL REFERENCES public.tenants(id),
+    altitude          VARCHAR(16) NOT NULL,
+    sovereignty_class VARCHAR(16) NOT NULL,
+    rigor_level       VARCHAR(16) NOT NULL,
+    default_modules   JSONB       NOT NULL,
+    created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT uq_organization_profile_tenant UNIQUE (tenant_id),
+    CONSTRAINT chk_organization_profile_altitude CHECK (altitude IN ('MACRO', 'DETAIL')),
+    CONSTRAINT chk_organization_profile_sovereignty_class
+        CHECK (sovereignty_class IN ('NEUTRAL', 'RESTRICTED', 'SOVEREIGN')),
+    CONSTRAINT chk_organization_profile_rigor_level
+        CHECK (rigor_level IN ('LIGHT', 'STANDARD', 'STRICT'))
+);
+CREATE INDEX IF NOT EXISTS idx_organization_profile_tenant_id
+    ON pilotage.organization_profile(tenant_id);
