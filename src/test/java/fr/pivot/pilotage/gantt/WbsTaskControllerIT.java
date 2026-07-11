@@ -26,9 +26,11 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -76,6 +78,9 @@ class WbsTaskControllerIT {
 
     @MockitoBean
     private WbsTaskService wbsTaskService;
+
+    @MockitoBean
+    private DependencyService dependencyService;
 
     @MockitoBean
     private WbsEditPolicy editPolicy;
@@ -191,5 +196,151 @@ class WbsTaskControllerIT {
                         .content("{\"parentTaskId\":99}"))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.code").value("WBS_HIERARCHY_CYCLE"));
+    }
+
+    // ============================ US22.4.3 — typed dependencies ==================================
+
+    private static DependencyResponse fsDependency() {
+        return new DependencyResponse(3L, 10L, 20L, fr.pivot.pilotage.schedule.DependencyLinkType.FS, 0);
+    }
+
+    // -------- read: list is not gated ------------------------------------------------------------
+
+    @Test
+    void listDependencies_read_returns200() throws Exception {
+        when(dependencyService.list(TENANT, TEAM, PROJECT)).thenReturn(List.of(fsDependency()));
+
+        mockMvc.perform(get(BASE + "/dependencies"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].linkType").value("FS"));
+    }
+
+    // -------- create: FS default applied, delegates, 201 -----------------------------------------
+
+    @Test
+    void createDependency_authorized_defaultsToFs_returns201() throws Exception {
+        when(editPolicy.isAuthorized()).thenReturn(true);
+        when(dependencyService.create(eq(TENANT), eq(TEAM), eq(PROJECT), any(CreateDependencyRequest.class)))
+                .thenReturn(fsDependency());
+
+        // Body omits linkType — the record's canonical constructor must default it to FS.
+        mockMvc.perform(post(BASE + "/dependencies")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"predecessorTaskId\":10,\"successorTaskId\":20}"))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.linkType").value("FS"));
+    }
+
+    // -------- Security AC: create write gated → 403, service never called ------------------------
+
+    @Test
+    void createDependency_unauthorized_returns403_andServiceNeverCalled() throws Exception {
+        when(editPolicy.isAuthorized()).thenReturn(false);
+
+        mockMvc.perform(post(BASE + "/dependencies")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"predecessorTaskId\":10,\"successorTaskId\":20,\"linkType\":\"SS\"}"))
+                .andExpect(status().isForbidden());
+
+        verify(dependencyService, never()).create(anyLong(), anyLong(), anyLong(),
+                any(CreateDependencyRequest.class));
+    }
+
+    // -------- Error AC: self-dependency → 422 ----------------------------------------------------
+
+    @Test
+    void createDependency_selfLink_returns422() throws Exception {
+        when(editPolicy.isAuthorized()).thenReturn(true);
+        when(dependencyService.create(eq(TENANT), eq(TEAM), eq(PROJECT), any(CreateDependencyRequest.class)))
+                .thenThrow(InvalidDependencyException.selfDependency(10L));
+
+        mockMvc.perform(post(BASE + "/dependencies")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"predecessorTaskId\":10,\"successorTaskId\":10}"))
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(jsonPath("$.code").value(InvalidDependencyException.CODE));
+    }
+
+    // -------- Error AC: duplicate link → 409 -----------------------------------------------------
+
+    @Test
+    void createDependency_duplicate_returns409() throws Exception {
+        when(editPolicy.isAuthorized()).thenReturn(true);
+        when(dependencyService.create(eq(TENANT), eq(TEAM), eq(PROJECT), any(CreateDependencyRequest.class)))
+                .thenThrow(new DuplicateDependencyException(10L, 20L,
+                        fr.pivot.pilotage.schedule.DependencyLinkType.FS));
+
+        mockMvc.perform(post(BASE + "/dependencies")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"predecessorTaskId\":10,\"successorTaskId\":20}"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value(DuplicateDependencyException.CODE));
+    }
+
+    // -------- Error AC: cycle → 409 SCHEDULE_CYCLE (distinct from WBS hierarchy cycle) ------------
+
+    @Test
+    void createDependency_cycle_returns409_scheduleCycle() throws Exception {
+        when(editPolicy.isAuthorized()).thenReturn(true);
+        when(dependencyService.create(eq(TENANT), eq(TEAM), eq(PROJECT), any(CreateDependencyRequest.class)))
+                .thenThrow(new DependencyCycleException("dependency cycle detected"));
+
+        mockMvc.perform(post(BASE + "/dependencies")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"predecessorTaskId\":20,\"successorTaskId\":10}"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("SCHEDULE_CYCLE"));
+    }
+
+    // -------- Security AC: cross-tenant / unknown endpoint → 404 non-disclosure -------------------
+
+    @Test
+    void createDependency_unknownEndpoint_returns404() throws Exception {
+        when(editPolicy.isAuthorized()).thenReturn(true);
+        when(dependencyService.create(eq(TENANT), eq(TEAM), eq(PROJECT), any(CreateDependencyRequest.class)))
+                .thenThrow(DependencyNotFoundException.endpointTask(999L, PROJECT));
+
+        mockMvc.perform(post(BASE + "/dependencies")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"predecessorTaskId\":999,\"successorTaskId\":20}"))
+                .andExpect(status().isNotFound());
+    }
+
+    // -------- update: gated, delegates -----------------------------------------------------------
+
+    @Test
+    void updateDependency_authorized_returns200() throws Exception {
+        when(editPolicy.isAuthorized()).thenReturn(true);
+        when(dependencyService.update(eq(TENANT), eq(TEAM), eq(PROJECT), eq(3L),
+                any(UpdateDependencyRequest.class)))
+                .thenReturn(new DependencyResponse(3L, 10L, 20L,
+                        fr.pivot.pilotage.schedule.DependencyLinkType.SS, 120));
+
+        mockMvc.perform(put(BASE + "/dependencies/3")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"linkType\":\"SS\",\"lagMinutes\":120}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.linkType").value("SS"))
+                .andExpect(jsonPath("$.lagMinutes").value(120));
+    }
+
+    // -------- delete: gated → 204 ----------------------------------------------------------------
+
+    @Test
+    void deleteDependency_authorized_returns204() throws Exception {
+        when(editPolicy.isAuthorized()).thenReturn(true);
+
+        mockMvc.perform(delete(BASE + "/dependencies/3")).andExpect(status().isNoContent());
+
+        verify(dependencyService).delete(TENANT, TEAM, PROJECT, 3L);
+    }
+
+    @Test
+    void deleteDependency_unauthorized_returns403() throws Exception {
+        when(editPolicy.isAuthorized()).thenReturn(false);
+
+        mockMvc.perform(delete(BASE + "/dependencies/3")).andExpect(status().isForbidden());
+
+        verify(dependencyService, never()).delete(anyLong(), anyLong(), anyLong(), anyLong());
     }
 }

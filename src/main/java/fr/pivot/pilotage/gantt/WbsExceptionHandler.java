@@ -92,6 +92,58 @@ class WbsExceptionHandler {
     }
 
     /**
+     * Maps an unresolved dependency (unknown/cross-tenant, or endpoint task outside the project,
+     * US22.4.3) to a bodyless {@code 404} — same non-disclosure posture.
+     *
+     * @param ex the thrown exception
+     * @return a bodyless 404 response
+     */
+    @ExceptionHandler(DependencyNotFoundException.class)
+    ResponseEntity<Void> handleDependencyNotFound(final DependencyNotFoundException ex) {
+        return ResponseEntity.notFound().build();
+    }
+
+    /**
+     * Maps a self-dependency (a task linked to itself, US22.4.3 error AC) to {@code 422 Unprocessable
+     * Entity} with an explicit message.
+     *
+     * @param ex the thrown exception
+     * @return a 422 response carrying a {@link WbsApiError} body
+     */
+    @ExceptionHandler(InvalidDependencyException.class)
+    ResponseEntity<WbsApiError> handleInvalidDependency(final InvalidDependencyException ex) {
+        return ResponseEntity.unprocessableEntity()
+                .body(new WbsApiError(InvalidDependencyException.CODE, ex.getMessage()));
+    }
+
+    /**
+     * Maps a duplicate dependency (same predecessor/successor/link type already exists, US22.4.3
+     * error AC) to {@code 409 Conflict} with an explicit message.
+     *
+     * @param ex the thrown exception
+     * @return a 409 response carrying a {@link WbsApiError} body
+     */
+    @ExceptionHandler(DuplicateDependencyException.class)
+    ResponseEntity<WbsApiError> handleDuplicateDependency(final DuplicateDependencyException ex) {
+        return ResponseEntity.status(HttpStatus.CONFLICT)
+                .body(new WbsApiError(DuplicateDependencyException.CODE, ex.getMessage()));
+    }
+
+    /**
+     * Maps a temporal-graph cycle (engine {@code SCHEDULE_CYCLE}, US22.4.3) to {@code 409 Conflict}
+     * carrying the engine's own code — deliberately distinct from the WBS hierarchy cycle
+     * ({@code WBS_HIERARCHY_CYCLE}, decision D4).
+     *
+     * @param ex the thrown exception
+     * @return a 409 response carrying a {@link WbsApiError} body
+     */
+    @ExceptionHandler(DependencyCycleException.class)
+    ResponseEntity<WbsApiError> handleDependencyCycle(final DependencyCycleException ex) {
+        return ResponseEntity.status(HttpStatus.CONFLICT)
+                .body(new WbsApiError(DependencyCycleException.CODE, ex.getMessage()));
+    }
+
+    /**
      * Maps an unreadable request body to the right status. A body carrying the derived
      * {@code wbsCode} property (rejected because {@code fail-on-unknown-properties} is on) is a
      * client attempt to write a server-derived field: that maps to {@code 422} (US22.4.1a error AC),

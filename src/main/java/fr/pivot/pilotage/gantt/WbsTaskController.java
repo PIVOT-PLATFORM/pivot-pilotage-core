@@ -1,12 +1,15 @@
 package fr.pivot.pilotage.gantt;
 
 import jakarta.validation.Valid;
+import java.util.List;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -33,6 +36,11 @@ import org.springframework.web.bind.annotation.RestController;
  *   <li>{@code PATCH .../gantt/tasks/{taskId}/indent} — indent (write, gated).</li>
  *   <li>{@code PATCH .../gantt/tasks/{taskId}/outdent} — outdent (write, gated).</li>
  *   <li>{@code PATCH .../gantt/tasks/{taskId}/move} — combined reparent/reorder (write, gated).</li>
+ *   <li>{@code GET    .../gantt/dependencies} — list the project's typed dependencies (US22.4.3).</li>
+ *   <li>{@code POST   .../gantt/dependencies} — create a typed link (write, gated). A cycle is
+ *       rejected {@code 409 SCHEDULE_CYCLE}, a duplicate {@code 409}, a self-link {@code 422}.</li>
+ *   <li>{@code PUT    .../gantt/dependencies/{dependencyId}} — retype/relag a link (write, gated).</li>
+ *   <li>{@code DELETE .../gantt/dependencies/{dependencyId}} — remove a link (write, gated).</li>
  * </ul>
  */
 @RestController
@@ -40,17 +48,21 @@ import org.springframework.web.bind.annotation.RestController;
 public class WbsTaskController {
 
     private final WbsTaskService wbsTaskService;
+    private final DependencyService dependencyService;
     private final WbsEditPolicy editPolicy;
 
     /**
      * Constructs the controller.
      *
-     * @param wbsTaskService the WBS business logic
-     * @param editPolicy     the role-gate extension point for writes (deny-all until the starter
-     *                       publishes membership, mirrors {@code RoadmapEditPolicy})
+     * @param wbsTaskService    the WBS business logic
+     * @param dependencyService the typed-dependency business logic (US22.4.3)
+     * @param editPolicy        the role-gate extension point for writes (deny-all until the starter
+     *                          publishes membership, mirrors {@code RoadmapEditPolicy})
      */
-    public WbsTaskController(final WbsTaskService wbsTaskService, final WbsEditPolicy editPolicy) {
+    public WbsTaskController(final WbsTaskService wbsTaskService, final DependencyService dependencyService,
+            final WbsEditPolicy editPolicy) {
         this.wbsTaskService = wbsTaskService;
+        this.dependencyService = dependencyService;
         this.editPolicy = editPolicy;
     }
 
@@ -144,6 +156,81 @@ public class WbsTaskController {
             @PathVariable final long taskId, @RequestBody final MoveWbsTaskRequest request) {
         requireEditAuthorized();
         return ResponseEntity.ok(wbsTaskService.move(tenantId, teamId, projectId, taskId, request));
+    }
+
+    /**
+     * Lists the project's typed dependencies (US22.4.3). A read — not gated by the edit policy, only
+     * by tenant/team/project isolation.
+     *
+     * @param tenantId  the tenant's {@code public.tenants.id}
+     * @param teamId    the team's {@code public.teams.id}
+     * @param projectId the project id
+     * @return {@code 200 OK} with the dependencies; {@code 404} if the project is not visible
+     */
+    @GetMapping("/dependencies")
+    public ResponseEntity<List<DependencyResponse>> listDependencies(@PathVariable final long tenantId,
+            @PathVariable final long teamId, @PathVariable final long projectId) {
+        return ResponseEntity.ok(dependencyService.list(tenantId, teamId, projectId));
+    }
+
+    /**
+     * Creates a typed dependency (FS/SS/FF/SF + signed lag) between two tasks of the project and
+     * re-runs the CPM; a cycle is rejected atomically.
+     *
+     * @param tenantId  the tenant's {@code public.tenants.id}
+     * @param teamId    the team's {@code public.teams.id}
+     * @param projectId the project id
+     * @param request   the creation payload (link type defaults to FS)
+     * @return {@code 201 Created} with the created dependency; {@code 403} if unauthorized;
+     *         {@code 404} if the project or an endpoint task is not visible; {@code 422} on a
+     *         self-link; {@code 409} on a duplicate or on a cycle ({@code SCHEDULE_CYCLE})
+     */
+    @PostMapping("/dependencies")
+    public ResponseEntity<DependencyResponse> createDependency(@PathVariable final long tenantId,
+            @PathVariable final long teamId, @PathVariable final long projectId,
+            @Valid @RequestBody final CreateDependencyRequest request) {
+        requireEditAuthorized();
+        return ResponseEntity.status(HttpStatus.CREATED)
+                .body(dependencyService.create(tenantId, teamId, projectId, request));
+    }
+
+    /**
+     * Retypes and/or relags an existing dependency and re-runs the CPM; a cycle is rejected
+     * atomically.
+     *
+     * @param tenantId     the tenant's {@code public.tenants.id}
+     * @param teamId       the team's {@code public.teams.id}
+     * @param projectId    the project id
+     * @param dependencyId the dependency id
+     * @param request      the update payload
+     * @return {@code 200 OK} with the updated dependency; {@code 403} if unauthorized; {@code 404} if
+     *         the project or the dependency is not visible; {@code 409} on a duplicate retype or on a
+     *         cycle ({@code SCHEDULE_CYCLE})
+     */
+    @PutMapping("/dependencies/{dependencyId}")
+    public ResponseEntity<DependencyResponse> updateDependency(@PathVariable final long tenantId,
+            @PathVariable final long teamId, @PathVariable final long projectId,
+            @PathVariable final long dependencyId, @Valid @RequestBody final UpdateDependencyRequest request) {
+        requireEditAuthorized();
+        return ResponseEntity.ok(dependencyService.update(tenantId, teamId, projectId, dependencyId, request));
+    }
+
+    /**
+     * Deletes a dependency and re-runs the CPM (removing an edge can never create a cycle).
+     *
+     * @param tenantId     the tenant's {@code public.tenants.id}
+     * @param teamId       the team's {@code public.teams.id}
+     * @param projectId    the project id
+     * @param dependencyId the dependency id
+     * @return {@code 204 No Content}; {@code 403} if unauthorized; {@code 404} if not visible
+     */
+    @DeleteMapping("/dependencies/{dependencyId}")
+    public ResponseEntity<Void> deleteDependency(@PathVariable final long tenantId,
+            @PathVariable final long teamId, @PathVariable final long projectId,
+            @PathVariable final long dependencyId) {
+        requireEditAuthorized();
+        dependencyService.delete(tenantId, teamId, projectId, dependencyId);
+        return ResponseEntity.noContent().build();
     }
 
     /**
