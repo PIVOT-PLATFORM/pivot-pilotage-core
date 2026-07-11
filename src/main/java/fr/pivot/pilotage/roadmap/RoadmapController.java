@@ -44,6 +44,11 @@ import java.util.List;
  *   <li>{@code POST .../roadmap/initiatives} — create an initiative on a lane (write, gated).</li>
  *   <li>{@code PATCH .../roadmap/initiatives/{initiativeId}} — move/resize/re-lane an initiative
  *       (write, gated).</li>
+ *   <li>{@code GET  .../roadmap/milestones} — list a project's strategic milestones, ordered by
+ *       date (US22.3.4).</li>
+ *   <li>{@code POST .../roadmap/milestones} — create a milestone (write, gated, US22.3.4).</li>
+ *   <li>{@code PATCH .../roadmap/milestones/{milestoneId}} — move/re-lane a milestone (write,
+ *       gated, US22.3.4).</li>
  * </ul>
  */
 @RestController
@@ -152,6 +157,61 @@ public class RoadmapController {
         requireEditAuthorized();
         return ResponseEntity
                 .ok(roadmapService.updatePlacement(tenantId, teamId, projectId, initiativeId, request));
+    }
+
+    /**
+     * Lists a project's strategic milestones (US22.3.4).
+     *
+     * @param tenantId  the tenant's {@code public.tenants.id}
+     * @param teamId    the team's {@code public.teams.id}
+     * @param projectId the project id
+     * @return {@code 200 OK} with the ordered milestones; {@code 404} if the project is not
+     *         visible
+     */
+    @GetMapping("/milestones")
+    public ResponseEntity<List<MilestoneResponse>> listMilestones(@PathVariable final long tenantId,
+            @PathVariable final long teamId, @PathVariable final long projectId) {
+        return ResponseEntity.ok(roadmapService.listMilestones(tenantId, teamId, projectId));
+    }
+
+    /**
+     * Creates a new strategic milestone, optionally pinned to a lane (US22.3.4).
+     *
+     * @param tenantId  the tenant's {@code public.tenants.id}
+     * @param teamId    the team's {@code public.teams.id}
+     * @param projectId the project id
+     * @param request   the milestone creation payload
+     * @return {@code 201 Created} with the created milestone; {@code 400} if the date is
+     *         missing/out-of-bounds or a supplied lane is invalid; {@code 403} if unauthorized;
+     *         {@code 404} if the project is not visible
+     */
+    @PostMapping("/milestones")
+    public ResponseEntity<MilestoneResponse> createMilestone(@PathVariable final long tenantId,
+            @PathVariable final long teamId, @PathVariable final long projectId,
+            @Valid @RequestBody final CreateMilestoneRequest request) {
+        requireEditAuthorized();
+        return ResponseEntity.status(HttpStatus.CREATED)
+                .body(roadmapService.createMilestone(tenantId, teamId, projectId, request));
+    }
+
+    /**
+     * Moves a milestone to a new date and/or reassigns it to a different lane (US22.3.4).
+     *
+     * @param tenantId    the tenant's {@code public.tenants.id}
+     * @param teamId      the team's {@code public.teams.id}
+     * @param projectId   the project id
+     * @param milestoneId the milestone (task) id
+     * @param request     the update payload
+     * @return {@code 200 OK} with the updated milestone; {@code 400} if a supplied lane is invalid
+     *         or the date is out-of-bounds; {@code 403} if unauthorized; {@code 404} if the
+     *         project or the milestone is not visible
+     */
+    @PatchMapping("/milestones/{milestoneId}")
+    public ResponseEntity<MilestoneResponse> updateMilestone(@PathVariable final long tenantId,
+            @PathVariable final long teamId, @PathVariable final long projectId,
+            @PathVariable final long milestoneId, @RequestBody final UpdateMilestoneRequest request) {
+        requireEditAuthorized();
+        return ResponseEntity.ok(roadmapService.updateMilestone(tenantId, teamId, projectId, milestoneId, request));
     }
 
     /**
