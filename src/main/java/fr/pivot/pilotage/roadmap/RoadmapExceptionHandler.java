@@ -108,4 +108,26 @@ class RoadmapExceptionHandler {
     ResponseEntity<ApiError> handleInvalidMilestoneDate(final InvalidMilestoneDateException ex) {
         return ResponseEntity.badRequest().body(new ApiError(ex.code(), ex.getMessage()));
     }
+
+    /**
+     * Maps a missing roadmap scale to 400 with a caller-facing message (US22.3.2).
+     *
+     * @param ex the thrown exception
+     * @return a 400 response carrying an {@link ApiError} body
+     */
+    @ExceptionHandler(InvalidRoadmapScaleException.class)
+    ResponseEntity<ApiError> handleInvalidScale(final InvalidRoadmapScaleException ex) {
+        return ResponseEntity.badRequest().body(new ApiError(InvalidRoadmapScaleException.CODE, ex.getMessage()));
+    }
+
+    /**
+     * Maps a missing Now/Next/Later horizon to 400 with a caller-facing message (US22.3.3).
+     *
+     * @param ex the thrown exception
+     * @return a 400 response carrying an {@link ApiError} body
+     */
+    @ExceptionHandler(InvalidHorizonException.class)
+    ResponseEntity<ApiError> handleInvalidHorizon(final InvalidHorizonException ex) {
+        return ResponseEntity.badRequest().body(new ApiError(InvalidHorizonException.CODE, ex.getMessage()));
+    }
 }

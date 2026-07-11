@@ -1,17 +1,21 @@
 package fr.pivot.pilotage.roadmap;
 
+import fr.pivot.pilotage.profile.OrganizationProfileResolver;
 import fr.pivot.pilotage.project.Project;
 import fr.pivot.pilotage.project.ProjectRepository;
+import fr.pivot.pilotage.schedule.Horizon;
 import fr.pivot.pilotage.schedule.NodeKind;
 import fr.pivot.pilotage.schedule.Task;
 import fr.pivot.pilotage.schedule.TaskRepository;
 import fr.pivot.pilotage.schedule.TemporalPrecision;
+import fr.pivot.pilotage.schedule.projection.Altitude;
 
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.EnumMap;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -54,12 +58,32 @@ public class RoadmapService {
      */
     private static final TemporalPrecision DEFAULT_TEMPORAL_PRECISION = TemporalPrecision.QUARTER;
 
+    /**
+     * Effective roadmap scale mapped from a {@link Altitude#MACRO} default profile (EN18.10) — the
+     * coarse, strategic grain the roadmap-rapide macro view opens on. Kept identical to
+     * {@link #DEFAULT_TEMPORAL_PRECISION} so a roadmap with no explicit scale set renders exactly
+     * as its freshly created initiatives already do.
+     */
+    private static final TemporalPrecision MACRO_DEFAULT_SCALE = TemporalPrecision.QUARTER;
+
+    /**
+     * Effective roadmap scale mapped from a {@link Altitude#DETAIL} default profile (EN18.10) — the
+     * fine, day grain a detail-oriented tenant opens on. The profile carries a view
+     * <em>altitude</em> (MACRO/DETAIL), not a temporal grain; this is the documented mapping the
+     * roadmap consumes rather than re-deriving a scale of its own.
+     */
+    private static final TemporalPrecision DETAIL_DEFAULT_SCALE = TemporalPrecision.DAY;
+
+    /** Default Now/Next/Later bucket of a freshly created initiative (US22.3.3). */
+    private static final Horizon DEFAULT_HORIZON = Horizon.NOW;
+
     /** Initial revision of a newly created initiative. */
     private static final int INITIAL_REVISION = 0;
 
     private final ProjectRepository projectRepository;
     private final LaneRepository laneRepository;
     private final TaskRepository taskRepository;
+    private final OrganizationProfileResolver profileResolver;
 
     /**
      * Constructs the service.
@@ -67,12 +91,16 @@ public class RoadmapService {
      * @param projectRepository tenant/team-scoped project repository (EN18.1)
      * @param laneRepository    lane repository (US22.3.1)
      * @param taskRepository    tenant/team-scoped task (temporal graph) repository (EN22.1a)
+     * @param profileResolver   default organization-profile resolver (EN18.10) — consumed to derive
+     *                          the default roadmap scale when a roadmap carries no explicit setting
+     *                          (US22.3.2), never re-implemented here
      */
     public RoadmapService(final ProjectRepository projectRepository, final LaneRepository laneRepository,
-            final TaskRepository taskRepository) {
+            final TaskRepository taskRepository, final OrganizationProfileResolver profileResolver) {
         this.projectRepository = projectRepository;
         this.laneRepository = laneRepository;
         this.taskRepository = taskRepository;
+        this.profileResolver = profileResolver;
     }
 
     // ---- lanes ---------------------------------------------------------------------------------
@@ -136,8 +164,26 @@ public class RoadmapService {
      */
     @Transactional(readOnly = true)
     public List<InitiativeResponse> listInitiatives(final long tenantId, final long teamId, final long projectId) {
-        requireProject(tenantId, teamId, projectId);
+        final Project project = requireProject(tenantId, teamId, projectId);
+        final TemporalPrecision scale = effectiveScale(tenantId, project);
 
+        final List<Task> initiatives = orderedInitiatives(tenantId, teamId, projectId);
+        return initiatives.stream().map(task -> InitiativeResponse.from(task, scale)).toList();
+    }
+
+    /**
+     * Loads a project's roadmap-rapide initiatives (lane-assigned tasks) in the canonical roadmap
+     * order — by lane display position, then by position within the lane, then by id. Shared by the
+     * temporal listing ({@link #listInitiatives}) and the Now/Next/Later view
+     * ({@link #listHorizonView}) so both render the same set in the same relative order (US22.3.3:
+     * "même jeu d'initiatives, changement de rendu uniquement").
+     *
+     * @param tenantId  the requesting tenant's {@code public.tenants.id}
+     * @param teamId    the requesting team's {@code public.teams.id}
+     * @param projectId the project id
+     * @return the ordered initiatives (possibly empty)
+     */
+    private List<Task> orderedInitiatives(final long tenantId, final long teamId, final long projectId) {
         final Map<Long, Integer> lanePositions = new HashMap<>();
         for (final Lane lane : laneRepository.findAllByProjectIdAndTenantIdAndTeamIdOrderByPositionAscIdAsc(
                 projectId, tenantId, teamId)) {
@@ -151,8 +197,7 @@ public class RoadmapService {
                 .<Task>comparingInt(t -> lanePositions.getOrDefault(t.getLaneId(), Integer.MAX_VALUE))
                 .thenComparingInt(t -> t.getPosition() == null ? 0 : t.getPosition())
                 .thenComparing(Task::getId));
-
-        return initiatives.stream().map(InitiativeResponse::from).toList();
+        return initiatives;
     }
 
     /**
@@ -171,7 +216,7 @@ public class RoadmapService {
     @Transactional
     public InitiativeResponse createInitiative(final long tenantId, final long teamId, final long projectId,
             final CreateInitiativeRequest request) {
-        requireProject(tenantId, teamId, projectId);
+        final Project project = requireProject(tenantId, teamId, projectId);
         requireLane(tenantId, teamId, projectId, request.laneId());
         validatePeriod(request.fuzzyPeriodStart(), request.fuzzyPeriodEnd());
 
@@ -185,8 +230,9 @@ public class RoadmapService {
         task.setLaneId(request.laneId());
         task.setFuzzyPeriodStart(request.fuzzyPeriodStart());
         task.setFuzzyPeriodEnd(request.fuzzyPeriodEnd());
+        task.setHorizon(request.horizon() != null ? request.horizon() : DEFAULT_HORIZON);
 
-        return InitiativeResponse.from(taskRepository.save(task));
+        return InitiativeResponse.from(taskRepository.save(task), effectiveScale(tenantId, project));
     }
 
     /**
@@ -207,11 +253,8 @@ public class RoadmapService {
     @Transactional
     public InitiativeResponse updatePlacement(final long tenantId, final long teamId, final long projectId,
             final long initiativeId, final UpdateInitiativePlacementRequest request) {
-        requireProject(tenantId, teamId, projectId);
-        final Task task = taskRepository.findByIdAndProjectIdAndTenantIdAndTeamId(
-                        initiativeId, projectId, tenantId, teamId)
-                .filter(t -> t.getLaneId() != null)
-                .orElseThrow(() -> new InitiativeNotFoundException(initiativeId, projectId));
+        final Project project = requireProject(tenantId, teamId, projectId);
+        final Task task = requireInitiative(tenantId, teamId, projectId, initiativeId);
 
         boolean changed = false;
         if (request.laneId() != null) {
@@ -229,7 +272,154 @@ public class RoadmapService {
             task.setRevision((task.getRevision() == null ? 0 : task.getRevision()) + 1);
         }
 
-        return InitiativeResponse.from(taskRepository.save(task));
+        return InitiativeResponse.from(taskRepository.save(task), effectiveScale(tenantId, project));
+    }
+
+    // ---- scale (US22.3.2) -----------------------------------------------------------------------
+
+    /**
+     * Reads a roadmap's fuzzy time scale (US22.3.2) — the per-roadmap view setting stored on
+     * {@code pilotage.project.default_temporal_precision}, or, when unset, the scale derived from
+     * the tenant's default profile (EN18.10).
+     *
+     * @param tenantId  the requesting tenant's {@code public.tenants.id}
+     * @param teamId    the requesting team's {@code public.teams.id}
+     * @param projectId the project id
+     * @return the effective scale and whether it is an explicit per-roadmap setting
+     * @throws ProjectNotFoundException if the project is not visible to the tenant/team
+     */
+    @Transactional(readOnly = true)
+    public RoadmapScaleResponse getScale(final long tenantId, final long teamId, final long projectId) {
+        final Project project = requireProject(tenantId, teamId, projectId);
+        final TemporalPrecision explicit = project.getDefaultTemporalPrecision();
+        return new RoadmapScaleResponse(explicit != null ? explicit : defaultScale(tenantId), explicit != null);
+    }
+
+    /**
+     * Sets a roadmap's fuzzy time scale (US22.3.2). A pure view setting: it writes only
+     * {@code pilotage.project.default_temporal_precision} and never touches any initiative's stored
+     * period, so switching scale "sans supprimer ni tronquer les données de période existantes"
+     * (error AC) is structurally guaranteed — a re-listed initiative simply snaps to the new scale.
+     *
+     * @param tenantId  the requesting tenant's {@code public.tenants.id}
+     * @param teamId    the requesting team's {@code public.teams.id}
+     * @param projectId the project id
+     * @param request   the scale update payload
+     * @return the effective scale after the update (always explicit)
+     * @throws ProjectNotFoundException    if the project is not visible to the tenant/team
+     * @throws InvalidRoadmapScaleException if no scale was supplied
+     */
+    @Transactional
+    public RoadmapScaleResponse updateScale(final long tenantId, final long teamId, final long projectId,
+            final UpdateRoadmapScaleRequest request) {
+        final Project project = requireProject(tenantId, teamId, projectId);
+        if (request.scale() == null) {
+            throw new InvalidRoadmapScaleException(projectId);
+        }
+        project.setDefaultTemporalPrecision(request.scale());
+        projectRepository.save(project);
+        return new RoadmapScaleResponse(request.scale(), true);
+    }
+
+    /**
+     * Resolves the effective scale for a project — its explicit per-roadmap setting when present,
+     * otherwise the tenant's profile-derived default (EN18.10).
+     *
+     * @param tenantId the requesting tenant's {@code public.tenants.id}
+     * @param project  the resolved project
+     * @return the effective scale (never {@code null})
+     */
+    private TemporalPrecision effectiveScale(final long tenantId, final Project project) {
+        final TemporalPrecision explicit = project.getDefaultTemporalPrecision();
+        return explicit != null ? explicit : defaultScale(tenantId);
+    }
+
+    /**
+     * Derives the default roadmap scale from the tenant's default profile (EN18.10) — consumes
+     * {@code resolveProfile(tenant).altitude()} and maps the view altitude (MACRO/DETAIL) onto a
+     * temporal grain. The profile is the single source of the default; this service never invents a
+     * scale of its own.
+     *
+     * @param tenantId the requesting tenant's {@code public.tenants.id}
+     * @return the default scale for the tenant
+     */
+    private TemporalPrecision defaultScale(final long tenantId) {
+        final Altitude altitude = profileResolver.resolveProfile(tenantId).altitude();
+        return altitude == Altitude.DETAIL ? DETAIL_DEFAULT_SCALE : MACRO_DEFAULT_SCALE;
+    }
+
+    // ---- Now / Next / Later (US22.3.3) ----------------------------------------------------------
+
+    /**
+     * Groups a project's roadmap-rapide initiatives into the Now/Next/Later buckets (US22.3.3) —
+     * an alternative projection over the same initiatives as {@link #listInitiatives}, with no
+     * temporal axis. The three concrete buckets are always present in {@code NOW}, {@code NEXT},
+     * {@code LATER} order (each possibly empty); initiatives with no horizon yet are surfaced
+     * separately (never dropped). Intra-bucket order follows the canonical roadmap order.
+     *
+     * @param tenantId  the requesting tenant's {@code public.tenants.id}
+     * @param teamId    the requesting team's {@code public.teams.id}
+     * @param projectId the project id
+     * @return the Now/Next/Later grouped view
+     * @throws ProjectNotFoundException if the project is not visible to the tenant/team
+     */
+    @Transactional(readOnly = true)
+    public HorizonViewResponse listHorizonView(final long tenantId, final long teamId, final long projectId) {
+        final Project project = requireProject(tenantId, teamId, projectId);
+        final TemporalPrecision scale = effectiveScale(tenantId, project);
+
+        final Map<Horizon, List<InitiativeResponse>> byBucket = new EnumMap<>(Horizon.class);
+        for (final Horizon horizon : Horizon.values()) {
+            byBucket.put(horizon, new ArrayList<>());
+        }
+        final List<InitiativeResponse> unbucketed = new ArrayList<>();
+
+        for (final Task task : orderedInitiatives(tenantId, teamId, projectId)) {
+            final InitiativeResponse response = InitiativeResponse.from(task, scale);
+            if (task.getHorizon() == null) {
+                unbucketed.add(response);
+            } else {
+                byBucket.get(task.getHorizon()).add(response);
+            }
+        }
+
+        final List<HorizonBucketResponse> buckets = new ArrayList<>();
+        for (final Horizon horizon : Horizon.values()) {
+            buckets.add(new HorizonBucketResponse(horizon, byBucket.get(horizon)));
+        }
+        return new HorizonViewResponse(buckets, unbucketed);
+    }
+
+    /**
+     * Moves an initiative to a different Now/Next/Later bucket (US22.3.3). The single write path for
+     * the "je la glisse d'un bucket à l'autre" AC — both the temporal and the Now/Next/Later views
+     * read the same {@code task.horizon} column, so no propagation is needed beyond this update.
+     *
+     * @param tenantId     the requesting tenant's {@code public.tenants.id}
+     * @param teamId       the requesting team's {@code public.teams.id}
+     * @param projectId    the project id
+     * @param initiativeId the initiative (task) id
+     * @param request      the horizon update payload
+     * @return the updated initiative
+     * @throws ProjectNotFoundException     if the project is not visible to the tenant/team
+     * @throws InitiativeNotFoundException  if the initiative does not resolve on this project
+     * @throws InvalidHorizonException      if no target horizon was supplied
+     */
+    @Transactional
+    public InitiativeResponse updateHorizon(final long tenantId, final long teamId, final long projectId,
+            final long initiativeId, final UpdateInitiativeHorizonRequest request) {
+        final Project project = requireProject(tenantId, teamId, projectId);
+        final Task task = requireInitiative(tenantId, teamId, projectId, initiativeId);
+        if (request.horizon() == null) {
+            throw new InvalidHorizonException(initiativeId);
+        }
+
+        if (request.horizon() != task.getHorizon()) {
+            task.setHorizon(request.horizon());
+            task.setRevision((task.getRevision() == null ? 0 : task.getRevision()) + 1);
+        }
+
+        return InitiativeResponse.from(taskRepository.save(task), effectiveScale(tenantId, project));
     }
 
     // ---- milestones (US22.3.4) ------------------------------------------------------------------
@@ -431,6 +621,27 @@ public class RoadmapService {
     private Project requireProject(final long tenantId, final long teamId, final long projectId) {
         return projectRepository.findByIdAndTenantIdAndTeamId(projectId, tenantId, teamId)
                 .orElseThrow(() -> new ProjectNotFoundException(projectId, tenantId, teamId));
+    }
+
+    /**
+     * Resolves a roadmap-rapide initiative (a lane-assigned task) within the project/tenant/team
+     * boundary — the shared lookup for the placement (US22.3.1) and horizon (US22.3.3) write paths.
+     * A task with no {@code lane_id} is a plain Gantt task, not an initiative this endpoint exposes,
+     * and is treated as not found (same non-disclosure posture).
+     *
+     * @param tenantId     the requesting tenant's {@code public.tenants.id}
+     * @param teamId       the requesting team's {@code public.teams.id}
+     * @param projectId    the project id
+     * @param initiativeId the initiative (task) id
+     * @return the resolved initiative task
+     * @throws InitiativeNotFoundException if the initiative does not resolve as a roadmap-rapide
+     *                                     initiative on this project
+     */
+    private Task requireInitiative(final long tenantId, final long teamId, final long projectId,
+            final long initiativeId) {
+        return taskRepository.findByIdAndProjectIdAndTenantIdAndTeamId(initiativeId, projectId, tenantId, teamId)
+                .filter(t -> t.getLaneId() != null)
+                .orElseThrow(() -> new InitiativeNotFoundException(initiativeId, projectId));
     }
 
     /**
