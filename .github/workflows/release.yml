@@ -176,6 +176,10 @@ jobs:
           severity: CRITICAL,HIGH
           ignore-unfixed: true
           exit-code: '1'
+          # Parité avec pr-preview.yml : sans ce flag, trivy-action `unset` TRIVY_SEVERITY pour
+          # tout format=sarif (cf. entrypoint.sh upstream #422), et exit-code se déclenche sur
+          # n'importe quelle sévérité au lieu de CRITICAL,HIGH seul.
+          limit-severities-for-sarif: true
 
       - name: Upload Trivy SARIF
         uses: github/codeql-action/upload-sarif@8aad20d150bbac5944a9f9d289da16a4b0d87c1e # v4

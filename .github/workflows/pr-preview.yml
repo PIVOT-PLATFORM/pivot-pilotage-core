@@ -104,6 +104,13 @@ jobs:
           # Dès qu'un fix existe et qu'on rebuild, elles redeviennent bloquantes.
           ignore-unfixed: true
           exit-code: '1'
+          # BUG PIÉGE trivy-action (entrypoint.sh, cf. #422 upstream) : avec format=sarif, le
+          # filtre `severity` est silencieusement `unset` (TRIVY_SEVERITY) tant que
+          # `limit-severities-for-sarif` n'est pas explicitement à `true` — le scan tourne alors
+          # sur TOUTES les sévérités (UNKNOWN..CRITICAL) et `exit-code` se déclenche sur n'importe
+          # quelle CVE, y compris LOW/MEDIUM déjà corrigées côté OS/JAR, malgré severity ci-dessus.
+          # Sans ce flag, le gate "CRITICAL,HIGH uniquement" documenté par ce step est un leurre.
+          limit-severities-for-sarif: true
 
       # MÊME catégorie code-scanning que le scan image de la Release (release.yml). La Release
       # ne tourne que sur push main : sans ça, la config `trivy-container` n'existerait jamais
