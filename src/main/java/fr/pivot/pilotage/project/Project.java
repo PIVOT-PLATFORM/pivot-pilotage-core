@@ -1,7 +1,12 @@
 package fr.pivot.pilotage.project;
 
+import fr.pivot.pilotage.schedule.Calendar;
+import fr.pivot.pilotage.schedule.SchedulingMode;
+import fr.pivot.pilotage.schedule.TemporalPrecision;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
 import jakarta.persistence.FetchType;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
@@ -13,9 +18,10 @@ import jakarta.persistence.PreUpdate;
 import jakarta.persistence.Table;
 
 import java.time.Instant;
+import java.time.LocalDate;
 
 /**
- * JPA entity representing a pilotage {@code Project} (EN18.1).
+ * JPA entity representing a pilotage {@code Project} (EN18.1, extended by EN22.1a).
  *
  * <p>A project is attached to exactly one {@link Application} ({@code application_id NOT NULL} —
  * this carries the "one Project = one Application" rule) and belongs to a single tenant
@@ -23,6 +29,11 @@ import java.time.Instant;
  * on the project (rather than only reachable through the application) to allow direct
  * tenant-scoped filtering without a systematic join. Timestamps are managed automatically via
  * JPA lifecycle callbacks.
+ *
+ * <p>EN22.1a adds the temporal-model anchor columns (frozen contract §a, {@code project}): the
+ * default project calendar, the scheduling mode, the status (data) date and the default temporal
+ * precision snapshot. The project stores no "view altitude" — that is a render preference
+ * resolved via the tenant profile (EN18.10).
  */
 @Entity
 @Table(name = "project", schema = "pilotage")
@@ -45,6 +56,39 @@ public class Project {
     /** Human-readable project name; maximum 255 characters. */
     @Column(name = "name", nullable = false, length = 255)
     private String name;
+
+    /**
+     * Default project calendar (EN22.1a); may be {@code null} until a calendar is assigned.
+     *
+     * <p>FK to {@code pilotage.calendar(id)}. Loaded lazily; the temporal graph and the
+     * scheduling engine (EN22.1b) read working days/times through it.
+     */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "calendar_id")
+    private Calendar calendar;
+
+    /**
+     * Project scheduling mode (EN22.1a); defaults to {@link SchedulingMode#AUTO}. A task may
+     * override it; a task with a {@code null} mode inherits this value.
+     */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "scheduling_mode", nullable = false, length = 8)
+    private SchedulingMode schedulingMode = SchedulingMode.AUTO;
+
+    /**
+     * Status (data) date (EN22.1a) — freshness guard against a "lying Gantt" (ADR-010); the
+     * source of truth for the project. {@code null} until first set.
+     */
+    @Column(name = "status_date")
+    private LocalDate statusDate;
+
+    /**
+     * Default temporal precision (EN22.1a): a snapshot of {@code resolveProfile(tenant).altitude}
+     * taken at creation. {@code null} means the profile must be re-read on the fly (EN18.10).
+     */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "default_temporal_precision", length = 16)
+    private TemporalPrecision defaultTemporalPrecision;
 
     /** Timestamp when the project was first persisted. */
     @Column(name = "created_at", nullable = false, updatable = false)
@@ -152,6 +196,78 @@ public class Project {
      */
     public void setName(final String name) {
         this.name = name;
+    }
+
+    /**
+     * Returns the default project calendar (EN22.1a).
+     *
+     * @return the {@link Calendar}, or {@code null} if none is assigned
+     */
+    public Calendar getCalendar() {
+        return calendar;
+    }
+
+    /**
+     * Sets the default project calendar (EN22.1a).
+     *
+     * @param calendar the calendar to assign (may be {@code null})
+     */
+    public void setCalendar(final Calendar calendar) {
+        this.calendar = calendar;
+    }
+
+    /**
+     * Returns the project scheduling mode (EN22.1a).
+     *
+     * @return the {@link SchedulingMode} (never {@code null}, defaults to {@code AUTO})
+     */
+    public SchedulingMode getSchedulingMode() {
+        return schedulingMode;
+    }
+
+    /**
+     * Sets the project scheduling mode (EN22.1a).
+     *
+     * @param schedulingMode the scheduling mode to set
+     */
+    public void setSchedulingMode(final SchedulingMode schedulingMode) {
+        this.schedulingMode = schedulingMode;
+    }
+
+    /**
+     * Returns the status (data) date (EN22.1a).
+     *
+     * @return the status date, or {@code null} if never set
+     */
+    public LocalDate getStatusDate() {
+        return statusDate;
+    }
+
+    /**
+     * Sets the status (data) date (EN22.1a).
+     *
+     * @param statusDate the status date to set (may be {@code null})
+     */
+    public void setStatusDate(final LocalDate statusDate) {
+        this.statusDate = statusDate;
+    }
+
+    /**
+     * Returns the default temporal precision snapshot (EN22.1a).
+     *
+     * @return the {@link TemporalPrecision}, or {@code null} to re-read the profile on the fly
+     */
+    public TemporalPrecision getDefaultTemporalPrecision() {
+        return defaultTemporalPrecision;
+    }
+
+    /**
+     * Sets the default temporal precision snapshot (EN22.1a).
+     *
+     * @param defaultTemporalPrecision the temporal precision to set (may be {@code null})
+     */
+    public void setDefaultTemporalPrecision(final TemporalPrecision defaultTemporalPrecision) {
+        this.defaultTemporalPrecision = defaultTemporalPrecision;
     }
 
     /**

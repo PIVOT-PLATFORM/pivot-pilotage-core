@@ -21,7 +21,21 @@
         <Or>
             <!-- EN18.1 — Application / Project : entités JPA du socle Pilotage. -->
             <Package name="fr.pivot.pilotage.project"/>
+            <!-- EN22.1a — schéma temporel : entités JPA schedule (Calendar, Task, Phase,
+                 dépendances, contraintes, assignations, avancement) et baseline. -->
+            <Package name="fr.pivot.pilotage.schedule"/>
+            <Package name="fr.pivot.pilotage.baseline"/>
         </Or>
+    </Match>
+
+    <!--
+        NM_CLASS_NOT_EXCEPTION : l'entité JPA `CalendarException` modélise un jour dérogatoire
+        de calendrier (férié / ouvré exceptionnel), pas une exception Java. Le nom est un terme
+        métier (table `pilotage.calendar_exception`), pas une erreur de conception.
+    -->
+    <Match>
+        <Bug pattern="NM_CLASS_NOT_EXCEPTION"/>
+        <Class name="fr.pivot.pilotage.schedule.CalendarException"/>
     </Match>
 
 </FindBugsFilter>
