@@ -1,5 +1,6 @@
 package fr.pivot.pilotage.roadmap;
 
+import fr.pivot.pilotage.schedule.Horizon;
 import fr.pivot.pilotage.schedule.TemporalPrecision;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
@@ -36,11 +37,16 @@ import java.time.LocalDate;
  *                          {@link TemporalPrecision#QUARTER} when omitted (roadmap-rapide is a
  *                          macro tool; US22.3.2 owns the fine-grained scale selection UI and may
  *                          later send an explicit value without any contract change here)
+ * @param horizon           the Now/Next/Later bucket (US22.3.3); optional — defaults to
+ *                          {@link Horizon#NOW} when omitted (a freshly created initiative is, by
+ *                          default, current focus; the Now/Next/Later view then lets the user move
+ *                          it to a later bucket)
  */
 public record CreateInitiativeRequest(
         @NotBlank @Size(max = 512) String name,
         Long laneId,
         LocalDate fuzzyPeriodStart,
         LocalDate fuzzyPeriodEnd,
-        TemporalPrecision temporalPrecision) {
+        TemporalPrecision temporalPrecision,
+        Horizon horizon) {
 }

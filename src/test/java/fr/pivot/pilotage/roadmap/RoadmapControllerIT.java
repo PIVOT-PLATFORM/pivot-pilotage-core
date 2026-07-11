@@ -1,5 +1,6 @@
 package fr.pivot.pilotage.roadmap;
 
+import fr.pivot.pilotage.schedule.Horizon;
 import fr.pivot.pilotage.schedule.TemporalPrecision;
 import fr.pivot.pilotage.testsupport.PlatformSchemaTestSupport;
 import org.junit.jupiter.api.BeforeEach;
@@ -31,6 +32,7 @@ import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -172,7 +174,8 @@ class RoadmapControllerIT {
     @Test
     void listInitiatives_returnsServiceResultAsJson() throws Exception {
         when(roadmapService.listInitiatives(TENANT, TEAM, PROJECT)).thenReturn(List.of(
-                new InitiativeResponse(1L, 1L, "Launch v1", null, null, TemporalPrecision.QUARTER, 0)));
+                new InitiativeResponse(1L, 1L, "Launch v1", null, null, new PeriodBounds(null, null),
+                        Horizon.NOW, TemporalPrecision.QUARTER, 0)));
 
         mockMvc.perform(get(BASE_PATH + "/initiatives"))
                 .andExpect(status().isOk())
@@ -185,7 +188,8 @@ class RoadmapControllerIT {
     void createInitiative_authorized_returns201AndInvokesService() throws Exception {
         when(editPolicy.isAuthorized()).thenReturn(true);
         when(roadmapService.createInitiative(eq(TENANT), eq(TEAM), eq(PROJECT), any(CreateInitiativeRequest.class)))
-                .thenReturn(new InitiativeResponse(1L, 1L, "Launch v1", null, null, TemporalPrecision.QUARTER, 0));
+                .thenReturn(new InitiativeResponse(1L, 1L, "Launch v1", null, null, new PeriodBounds(null, null),
+                        Horizon.NOW, TemporalPrecision.QUARTER, 0));
 
         mockMvc.perform(post(BASE_PATH + "/initiatives")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -222,7 +226,7 @@ class RoadmapControllerIT {
                 .andExpect(content().string(containsString("lane")));
 
         verify(roadmapService).createInitiative(eq(TENANT), eq(TEAM), eq(PROJECT),
-                eq(new CreateInitiativeRequest("Launch v1", null, null, null, null)));
+                eq(new CreateInitiativeRequest("Launch v1", null, null, null, null, null)));
     }
 
     @Test
@@ -261,7 +265,8 @@ class RoadmapControllerIT {
                 any(UpdateInitiativePlacementRequest.class)))
                 .thenReturn(new InitiativeResponse(7L, 1L, "Launch v1",
                         java.time.LocalDate.of(2026, 1, 1), java.time.LocalDate.of(2026, 3, 31),
-                        TemporalPrecision.QUARTER, 1));
+                        new PeriodBounds(java.time.LocalDate.of(2026, 1, 1), java.time.LocalDate.of(2026, 3, 31)),
+                        Horizon.NOW, TemporalPrecision.QUARTER, 1));
 
         mockMvc.perform(patch(BASE_PATH + "/initiatives/7")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -291,6 +296,149 @@ class RoadmapControllerIT {
         mockMvc.perform(patch(BASE_PATH + "/initiatives/999")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{}"))
+                .andExpect(status().isNotFound());
+    }
+
+    // -------- scale (US22.3.2) ----------------------------------------------------------------------
+
+    @Test
+    void getScale_returnsServiceResultAsJson() throws Exception {
+        when(roadmapService.getScale(TENANT, TEAM, PROJECT))
+                .thenReturn(new RoadmapScaleResponse(TemporalPrecision.QUARTER, false));
+
+        mockMvc.perform(get(BASE_PATH + "/scale"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.scale").value("QUARTER"))
+                .andExpect(jsonPath("$.explicit").value(false));
+    }
+
+    @Test
+    void getScale_unknownProject_returns404() throws Exception {
+        when(roadmapService.getScale(TENANT, TEAM, PROJECT))
+                .thenThrow(new ProjectNotFoundException(PROJECT, TENANT, TEAM));
+
+        mockMvc.perform(get(BASE_PATH + "/scale")).andExpect(status().isNotFound());
+    }
+
+    @Test
+    void updateScale_authorized_returns200AndInvokesService() throws Exception {
+        when(editPolicy.isAuthorized()).thenReturn(true);
+        when(roadmapService.updateScale(eq(TENANT), eq(TEAM), eq(PROJECT), any(UpdateRoadmapScaleRequest.class)))
+                .thenReturn(new RoadmapScaleResponse(TemporalPrecision.MONTH, true));
+
+        mockMvc.perform(put(BASE_PATH + "/scale")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"scale\":\"MONTH\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.scale").value("MONTH"))
+                .andExpect(jsonPath("$.explicit").value(true));
+    }
+
+    @Test
+    void updateScale_notAuthorized_returns403AndNeverInvokesService() throws Exception {
+        when(editPolicy.isAuthorized()).thenReturn(false);
+
+        mockMvc.perform(put(BASE_PATH + "/scale")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"scale\":\"MONTH\"}"))
+                .andExpect(status().isForbidden());
+
+        verify(roadmapService, never()).updateScale(anyLong(), anyLong(), anyLong(), any());
+    }
+
+    @Test
+    void updateScale_missingScale_returns400WithBody() throws Exception {
+        when(editPolicy.isAuthorized()).thenReturn(true);
+        when(roadmapService.updateScale(eq(TENANT), eq(TEAM), eq(PROJECT), any(UpdateRoadmapScaleRequest.class)))
+                .thenThrow(new InvalidRoadmapScaleException(PROJECT));
+
+        mockMvc.perform(put(BASE_PATH + "/scale")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("SCALE_REQUIRED"));
+    }
+
+    // -------- Now / Next / Later (US22.3.3): grouped view -------------------------------------------
+
+    @Test
+    void horizonView_returnsServiceResultAsJson() throws Exception {
+        when(roadmapService.listHorizonView(TENANT, TEAM, PROJECT)).thenReturn(new HorizonViewResponse(
+                List.of(new HorizonBucketResponse(Horizon.NOW, List.of(new InitiativeResponse(
+                                1L, 1L, "Now item", null, null, new PeriodBounds(null, null), Horizon.NOW,
+                                TemporalPrecision.QUARTER, 0))),
+                        new HorizonBucketResponse(Horizon.NEXT, List.of()),
+                        new HorizonBucketResponse(Horizon.LATER, List.of())),
+                List.of()));
+
+        mockMvc.perform(get(BASE_PATH + "/horizon-view"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.buckets[0].horizon").value("NOW"))
+                .andExpect(jsonPath("$.buckets[0].initiatives[0].name").value("Now item"))
+                .andExpect(jsonPath("$.buckets[2].horizon").value("LATER"));
+    }
+
+    @Test
+    void horizonView_unknownProject_returns404() throws Exception {
+        when(roadmapService.listHorizonView(TENANT, TEAM, PROJECT))
+                .thenThrow(new ProjectNotFoundException(PROJECT, TENANT, TEAM));
+
+        mockMvc.perform(get(BASE_PATH + "/horizon-view")).andExpect(status().isNotFound());
+    }
+
+    // -------- Now / Next / Later (US22.3.3): move bucket --------------------------------------------
+
+    @Test
+    void updateHorizon_authorized_returns200AndInvokesService() throws Exception {
+        when(editPolicy.isAuthorized()).thenReturn(true);
+        when(roadmapService.updateHorizon(eq(TENANT), eq(TEAM), eq(PROJECT), eq(7L),
+                any(UpdateInitiativeHorizonRequest.class)))
+                .thenReturn(new InitiativeResponse(7L, 1L, "Moved", null, null, new PeriodBounds(null, null),
+                        Horizon.LATER, TemporalPrecision.QUARTER, 1));
+
+        mockMvc.perform(patch(BASE_PATH + "/initiatives/7/horizon")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"horizon\":\"LATER\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.horizon").value("LATER"))
+                .andExpect(jsonPath("$.revision").value(1));
+    }
+
+    @Test
+    void updateHorizon_notAuthorized_returns403AndNeverInvokesService() throws Exception {
+        when(editPolicy.isAuthorized()).thenReturn(false);
+
+        mockMvc.perform(patch(BASE_PATH + "/initiatives/7/horizon")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"horizon\":\"LATER\"}"))
+                .andExpect(status().isForbidden());
+
+        verify(roadmapService, never()).updateHorizon(anyLong(), anyLong(), anyLong(), anyLong(), any());
+    }
+
+    @Test
+    void updateHorizon_missingHorizon_returns400WithBody() throws Exception {
+        when(editPolicy.isAuthorized()).thenReturn(true);
+        when(roadmapService.updateHorizon(eq(TENANT), eq(TEAM), eq(PROJECT), eq(7L),
+                any(UpdateInitiativeHorizonRequest.class)))
+                .thenThrow(new InvalidHorizonException(7L));
+
+        mockMvc.perform(patch(BASE_PATH + "/initiatives/7/horizon")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("HORIZON_REQUIRED"));
+    }
+
+    @Test
+    void updateHorizon_unknownInitiative_returns404() throws Exception {
+        when(editPolicy.isAuthorized()).thenReturn(true);
+        doThrow(new InitiativeNotFoundException(999L, PROJECT))
+                .when(roadmapService).updateHorizon(eq(TENANT), eq(TEAM), eq(PROJECT), eq(999L), any());
+
+        mockMvc.perform(patch(BASE_PATH + "/initiatives/999/horizon")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"horizon\":\"NOW\"}"))
                 .andExpect(status().isNotFound());
     }
 

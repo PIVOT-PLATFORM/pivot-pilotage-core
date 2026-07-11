@@ -6,6 +6,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -44,6 +45,13 @@ import java.util.List;
  *   <li>{@code POST .../roadmap/initiatives} — create an initiative on a lane (write, gated).</li>
  *   <li>{@code PATCH .../roadmap/initiatives/{initiativeId}} — move/resize/re-lane an initiative
  *       (write, gated).</li>
+ *   <li>{@code PATCH .../roadmap/initiatives/{initiativeId}/horizon} — move an initiative to a
+ *       Now/Next/Later bucket (write, gated, US22.3.3).</li>
+ *   <li>{@code GET  .../roadmap/scale} — read the roadmap's fuzzy time scale (US22.3.2).</li>
+ *   <li>{@code PUT  .../roadmap/scale} — set the roadmap's fuzzy time scale (write, gated,
+ *       US22.3.2).</li>
+ *   <li>{@code GET  .../roadmap/horizon-view} — read the Now/Next/Later grouped view
+ *       (US22.3.3).</li>
  *   <li>{@code GET  .../roadmap/milestones} — list a project's strategic milestones, ordered by
  *       date (US22.3.4).</li>
  *   <li>{@code POST .../roadmap/milestones} — create a milestone (write, gated, US22.3.4).</li>
@@ -157,6 +165,77 @@ public class RoadmapController {
         requireEditAuthorized();
         return ResponseEntity
                 .ok(roadmapService.updatePlacement(tenantId, teamId, projectId, initiativeId, request));
+    }
+
+    /**
+     * Moves an initiative to a different Now/Next/Later bucket (US22.3.3).
+     *
+     * @param tenantId     the tenant's {@code public.tenants.id}
+     * @param teamId       the team's {@code public.teams.id}
+     * @param projectId    the project id
+     * @param initiativeId the initiative (task) id
+     * @param request      the horizon update payload
+     * @return {@code 200 OK} with the updated initiative; {@code 400} if no target horizon was
+     *         supplied; {@code 403} if unauthorized; {@code 404} if the project or the initiative is
+     *         not visible
+     */
+    @PatchMapping("/initiatives/{initiativeId}/horizon")
+    public ResponseEntity<InitiativeResponse> updateInitiativeHorizon(@PathVariable final long tenantId,
+            @PathVariable final long teamId, @PathVariable final long projectId,
+            @PathVariable final long initiativeId, @RequestBody final UpdateInitiativeHorizonRequest request) {
+        requireEditAuthorized();
+        return ResponseEntity.ok(roadmapService.updateHorizon(tenantId, teamId, projectId, initiativeId, request));
+    }
+
+    /**
+     * Reads the roadmap's fuzzy time scale (US22.3.2) — the per-roadmap view setting, or the
+     * profile-derived default (EN18.10) when unset. A read: not gated by the edit policy.
+     *
+     * @param tenantId  the tenant's {@code public.tenants.id}
+     * @param teamId    the team's {@code public.teams.id}
+     * @param projectId the project id
+     * @return {@code 200 OK} with the effective scale; {@code 404} if the project is not visible
+     */
+    @GetMapping("/scale")
+    public ResponseEntity<RoadmapScaleResponse> getScale(@PathVariable final long tenantId,
+            @PathVariable final long teamId, @PathVariable final long projectId) {
+        return ResponseEntity.ok(roadmapService.getScale(tenantId, teamId, projectId));
+    }
+
+    /**
+     * Sets the roadmap's fuzzy time scale (US22.3.2). A view setting: it never mutates any
+     * initiative's stored period. Gated as a write per the security AC (only an editor may change
+     * it).
+     *
+     * @param tenantId  the tenant's {@code public.tenants.id}
+     * @param teamId    the team's {@code public.teams.id}
+     * @param projectId the project id
+     * @param request   the scale update payload
+     * @return {@code 200 OK} with the updated scale; {@code 400} if no scale was supplied;
+     *         {@code 403} if unauthorized; {@code 404} if the project is not visible
+     */
+    @PutMapping("/scale")
+    public ResponseEntity<RoadmapScaleResponse> updateScale(@PathVariable final long tenantId,
+            @PathVariable final long teamId, @PathVariable final long projectId,
+            @RequestBody final UpdateRoadmapScaleRequest request) {
+        requireEditAuthorized();
+        return ResponseEntity.ok(roadmapService.updateScale(tenantId, teamId, projectId, request));
+    }
+
+    /**
+     * Reads the Now/Next/Later grouped view of a project's initiatives (US22.3.3). A read: not
+     * gated by the edit policy.
+     *
+     * @param tenantId  the tenant's {@code public.tenants.id}
+     * @param teamId    the team's {@code public.teams.id}
+     * @param projectId the project id
+     * @return {@code 200 OK} with the three ordered buckets; {@code 404} if the project is not
+     *         visible
+     */
+    @GetMapping("/horizon-view")
+    public ResponseEntity<HorizonViewResponse> horizonView(@PathVariable final long tenantId,
+            @PathVariable final long teamId, @PathVariable final long projectId) {
+        return ResponseEntity.ok(roadmapService.listHorizonView(tenantId, teamId, projectId));
     }
 
     /**

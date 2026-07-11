@@ -1,11 +1,17 @@
 package fr.pivot.pilotage.roadmap;
 
+import fr.pivot.pilotage.profile.DefaultOrganizationProfile;
+import fr.pivot.pilotage.profile.OrganizationProfileResolver;
+import fr.pivot.pilotage.profile.RigorLevel;
+import fr.pivot.pilotage.profile.SovereigntyClass;
 import fr.pivot.pilotage.project.Project;
 import fr.pivot.pilotage.project.ProjectRepository;
+import fr.pivot.pilotage.schedule.Horizon;
 import fr.pivot.pilotage.schedule.NodeKind;
 import fr.pivot.pilotage.schedule.Task;
 import fr.pivot.pilotage.schedule.TaskRepository;
 import fr.pivot.pilotage.schedule.TemporalPrecision;
+import fr.pivot.pilotage.schedule.projection.Altitude;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -43,14 +49,17 @@ class RoadmapServiceTest {
     @Mock private ProjectRepository projectRepository;
     @Mock private LaneRepository laneRepository;
     @Mock private TaskRepository taskRepository;
+    @Mock private OrganizationProfileResolver profileResolver;
 
     private RoadmapService service;
 
     @BeforeEach
     void setUp() {
-        service = new RoadmapService(projectRepository, laneRepository, taskRepository);
+        service = new RoadmapService(projectRepository, laneRepository, taskRepository, profileResolver);
         lenient().when(projectRepository.findByIdAndTenantIdAndTeamId(PROJECT, TENANT, TEAM))
                 .thenReturn(Optional.of(new Project(null, TENANT, TEAM, "P", Instant.now())));
+        lenient().when(profileResolver.resolveProfile(TENANT)).thenReturn(new DefaultOrganizationProfile(
+                Altitude.MACRO, SovereigntyClass.ZONE_B_CONTROLEE, RigorLevel.STANDARD, java.util.Set.of("roadmap")));
     }
 
     private static void setId(final Object entity, final long id) {
@@ -202,7 +211,7 @@ class RoadmapServiceTest {
         });
 
         final InitiativeResponse response = service.createInitiative(TENANT, TEAM, PROJECT,
-                new CreateInitiativeRequest("Initiative", 1L, null, null, null));
+                new CreateInitiativeRequest("Initiative", 1L, null, null, null, null));
 
         assertThat(response.id()).isEqualTo(50L);
         assertThat(response.laneId()).isEqualTo(1L);
@@ -210,6 +219,7 @@ class RoadmapServiceTest {
         assertThat(response.fuzzyPeriodStart()).isNull();
         assertThat(response.fuzzyPeriodEnd()).isNull();
         assertThat(response.temporalPrecision()).isEqualTo(TemporalPrecision.QUARTER);
+        assertThat(response.horizon()).isEqualTo(Horizon.NOW);
         assertThat(response.revision()).isZero();
     }
 
@@ -227,7 +237,7 @@ class RoadmapServiceTest {
         final LocalDate end = LocalDate.of(2026, 3, 31);
 
         final InitiativeResponse response = service.createInitiative(TENANT, TEAM, PROJECT,
-                new CreateInitiativeRequest("Q1 push", 1L, start, end, TemporalPrecision.MONTH));
+                new CreateInitiativeRequest("Q1 push", 1L, start, end, TemporalPrecision.MONTH, null));
 
         assertThat(response.fuzzyPeriodStart()).isEqualTo(start);
         assertThat(response.fuzzyPeriodEnd()).isEqualTo(end);
@@ -241,7 +251,7 @@ class RoadmapServiceTest {
 
         final LaneNotFoundException ex = Assertions.assertThrows(
                 LaneNotFoundException.class, () -> service.createInitiative(
-                        TENANT, TEAM, PROJECT, new CreateInitiativeRequest("X", 999L, null, null, null)));
+                        TENANT, TEAM, PROJECT, new CreateInitiativeRequest("X", 999L, null, null, null, null)));
         assertThat(ex.code()).isEqualTo(LaneNotFoundException.CODE_NOT_FOUND);
 
         verify(taskRepository, never()).save(any());
@@ -251,7 +261,7 @@ class RoadmapServiceTest {
     void createInitiative_noLaneIdAtAll_throwsLaneNotFoundMissing() {
         final LaneNotFoundException ex = Assertions.assertThrows(
                 LaneNotFoundException.class, () -> service.createInitiative(
-                        TENANT, TEAM, PROJECT, new CreateInitiativeRequest("X", null, null, null, null)));
+                        TENANT, TEAM, PROJECT, new CreateInitiativeRequest("X", null, null, null, null, null)));
 
         assertThat(ex.code()).isEqualTo(LaneNotFoundException.CODE_REQUIRED);
         assertThat(ex.getMessage()).contains("lane");
@@ -266,7 +276,7 @@ class RoadmapServiceTest {
 
         assertThatExceptionOfType(InvalidInitiativePeriodException.class).isThrownBy(
                 () -> service.createInitiative(TENANT, TEAM, PROJECT,
-                        new CreateInitiativeRequest("X", 1L, LocalDate.of(2026, 1, 1), null, null)));
+                        new CreateInitiativeRequest("X", 1L, LocalDate.of(2026, 1, 1), null, null, null)));
 
         verify(taskRepository, never()).save(any());
     }
@@ -278,7 +288,7 @@ class RoadmapServiceTest {
 
         assertThatExceptionOfType(InvalidInitiativePeriodException.class).isThrownBy(
                 () -> service.createInitiative(TENANT, TEAM, PROJECT, new CreateInitiativeRequest(
-                        "X", 1L, LocalDate.of(2026, 3, 31), LocalDate.of(2026, 1, 1), null)));
+                        "X", 1L, LocalDate.of(2026, 3, 31), LocalDate.of(2026, 1, 1), null, null)));
 
         verify(taskRepository, never()).save(any());
     }
@@ -637,5 +647,190 @@ class RoadmapServiceTest {
 
         assertThat(ex.code()).isEqualTo(InvalidMilestoneDateException.CODE_OUT_OF_BOUNDS);
         verify(taskRepository, never()).save(any());
+    }
+
+    // ---- scale (US22.3.2) --------------------------------------------------------------------------
+
+    private static Task initiativeWith(final long id, final long laneId, final TemporalPrecision precision,
+            final LocalDate start, final LocalDate end, final Horizon horizon) {
+        final Task task = new Task(TENANT, TEAM, PROJECT, 0, "I", NodeKind.LEAF, Boolean.TRUE, precision, 0);
+        task.setLaneId(laneId);
+        task.setFuzzyPeriodStart(start);
+        task.setFuzzyPeriodEnd(end);
+        task.setHorizon(horizon);
+        setId(task, id);
+        return task;
+    }
+
+    @Test
+    void getScale_noExplicitSetting_derivesMacroDefaultFromProfile() {
+        // Project seeded in setUp has a null default_temporal_precision; profile altitude = MACRO.
+        final RoadmapScaleResponse response = service.getScale(TENANT, TEAM, PROJECT);
+
+        assertThat(response.scale()).isEqualTo(TemporalPrecision.QUARTER);
+        assertThat(response.explicit()).isFalse();
+    }
+
+    @Test
+    void getScale_detailProfile_derivesDayDefault() {
+        when(profileResolver.resolveProfile(TENANT)).thenReturn(new DefaultOrganizationProfile(
+                Altitude.DETAIL, SovereigntyClass.ZONE_B_CONTROLEE, RigorLevel.STANDARD, java.util.Set.of("roadmap")));
+
+        final RoadmapScaleResponse response = service.getScale(TENANT, TEAM, PROJECT);
+
+        assertThat(response.scale()).isEqualTo(TemporalPrecision.DAY);
+        assertThat(response.explicit()).isFalse();
+    }
+
+    @Test
+    void getScale_explicitSetting_isReturnedAsExplicit() {
+        final Project project = new Project(null, TENANT, TEAM, "P", Instant.now());
+        project.setDefaultTemporalPrecision(TemporalPrecision.SEMESTER);
+        when(projectRepository.findByIdAndTenantIdAndTeamId(PROJECT, TENANT, TEAM)).thenReturn(Optional.of(project));
+
+        final RoadmapScaleResponse response = service.getScale(TENANT, TEAM, PROJECT);
+
+        assertThat(response.scale()).isEqualTo(TemporalPrecision.SEMESTER);
+        assertThat(response.explicit()).isTrue();
+    }
+
+    @Test
+    void updateScale_persistsSettingWithoutTouchingInitiativePeriods() {
+        final Project project = new Project(null, TENANT, TEAM, "P", Instant.now());
+        when(projectRepository.findByIdAndTenantIdAndTeamId(PROJECT, TENANT, TEAM)).thenReturn(Optional.of(project));
+        when(projectRepository.save(any(Project.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        final RoadmapScaleResponse response = service.updateScale(TENANT, TEAM, PROJECT,
+                new UpdateRoadmapScaleRequest(TemporalPrecision.MONTH));
+
+        assertThat(response.scale()).isEqualTo(TemporalPrecision.MONTH);
+        assertThat(response.explicit()).isTrue();
+        assertThat(project.getDefaultTemporalPrecision()).isEqualTo(TemporalPrecision.MONTH);
+        // No initiative row is ever written by a scale change (error AC: no data loss/truncation).
+        verify(taskRepository, never()).save(any());
+    }
+
+    @Test
+    void updateScale_nullScale_throwsInvalidRoadmapScale() {
+        assertThatExceptionOfType(InvalidRoadmapScaleException.class).isThrownBy(() ->
+                service.updateScale(TENANT, TEAM, PROJECT, new UpdateRoadmapScaleRequest(null)));
+
+        verify(projectRepository, never()).save(any());
+    }
+
+    @Test
+    void listInitiatives_snapsBarBoundsToQuarterScale() {
+        when(laneRepository.findAllByProjectIdAndTenantIdAndTeamIdOrderByPositionAscIdAsc(PROJECT, TENANT, TEAM))
+                .thenReturn(List.of(lane(1L, "Lane A", 0)));
+        // Stored fuzzy period Feb 10 → May 20, no explicit scale ⇒ default QUARTER.
+        when(taskRepository.findAllByProjectIdAndTenantIdAndTeamIdAndLaneIdIsNotNull(PROJECT, TENANT, TEAM))
+                .thenReturn(List.of(initiativeWith(40L, 1L, TemporalPrecision.QUARTER,
+                        LocalDate.of(2026, 2, 10), LocalDate.of(2026, 5, 20), Horizon.NOW)));
+
+        final InitiativeResponse only = service.listInitiatives(TENANT, TEAM, PROJECT).get(0);
+
+        // Raw period preserved…
+        assertThat(only.fuzzyPeriodStart()).isEqualTo(LocalDate.of(2026, 2, 10));
+        assertThat(only.fuzzyPeriodEnd()).isEqualTo(LocalDate.of(2026, 5, 20));
+        // …bar snapped to Q1 start (Jan 1) and Q2 end (Jun 30).
+        assertThat(only.periodBounds().start()).isEqualTo(LocalDate.of(2026, 1, 1));
+        assertThat(only.periodBounds().end()).isEqualTo(LocalDate.of(2026, 6, 30));
+    }
+
+    @Test
+    void listInitiatives_noPeriod_snapsToNullBounds() {
+        when(laneRepository.findAllByProjectIdAndTenantIdAndTeamIdOrderByPositionAscIdAsc(PROJECT, TENANT, TEAM))
+                .thenReturn(List.of(lane(1L, "Lane A", 0)));
+        when(taskRepository.findAllByProjectIdAndTenantIdAndTeamIdAndLaneIdIsNotNull(PROJECT, TENANT, TEAM))
+                .thenReturn(List.of(initiativeWith(41L, 1L, TemporalPrecision.QUARTER, null, null, Horizon.NOW)));
+
+        final InitiativeResponse only = service.listInitiatives(TENANT, TEAM, PROJECT).get(0);
+
+        assertThat(only.periodBounds().start()).isNull();
+        assertThat(only.periodBounds().end()).isNull();
+    }
+
+    // ---- Now / Next / Later (US22.3.3) -------------------------------------------------------------
+
+    @Test
+    void listHorizonView_groupsInitiativesIntoOrderedBuckets() {
+        when(laneRepository.findAllByProjectIdAndTenantIdAndTeamIdOrderByPositionAscIdAsc(PROJECT, TENANT, TEAM))
+                .thenReturn(List.of(lane(1L, "Lane A", 0)));
+        when(taskRepository.findAllByProjectIdAndTenantIdAndTeamIdAndLaneIdIsNotNull(PROJECT, TENANT, TEAM))
+                .thenReturn(List.of(
+                        initiativeWith(50L, 1L, TemporalPrecision.QUARTER, null, null, Horizon.LATER),
+                        initiativeWith(51L, 1L, TemporalPrecision.QUARTER, null, null, Horizon.NOW),
+                        initiativeWith(52L, 1L, TemporalPrecision.QUARTER, null, null, null)));
+
+        final HorizonViewResponse view = service.listHorizonView(TENANT, TEAM, PROJECT);
+
+        assertThat(view.buckets()).extracting(HorizonBucketResponse::horizon)
+                .containsExactly(Horizon.NOW, Horizon.NEXT, Horizon.LATER);
+        assertThat(view.buckets().get(0).initiatives()).extracting(InitiativeResponse::id).containsExactly(51L);
+        assertThat(view.buckets().get(1).initiatives()).isEmpty();
+        assertThat(view.buckets().get(2).initiatives()).extracting(InitiativeResponse::id).containsExactly(50L);
+        // A pre-existing initiative with no horizon is surfaced, never dropped.
+        assertThat(view.unbucketed()).extracting(InitiativeResponse::id).containsExactly(52L);
+    }
+
+    @Test
+    void updateHorizon_movesBucketAndBumpsRevision() {
+        final Task existing = initiativeWith(60L, 1L, TemporalPrecision.QUARTER, null, null, Horizon.NOW);
+        when(taskRepository.findByIdAndProjectIdAndTenantIdAndTeamId(60L, PROJECT, TENANT, TEAM))
+                .thenReturn(Optional.of(existing));
+        when(taskRepository.save(any(Task.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        final InitiativeResponse response = service.updateHorizon(TENANT, TEAM, PROJECT, 60L,
+                new UpdateInitiativeHorizonRequest(Horizon.LATER));
+
+        assertThat(response.horizon()).isEqualTo(Horizon.LATER);
+        assertThat(response.revision()).isEqualTo(1);
+    }
+
+    @Test
+    void updateHorizon_sameBucket_isNoOpAndRevisionUnchanged() {
+        final Task existing = initiativeWith(61L, 1L, TemporalPrecision.QUARTER, null, null, Horizon.NEXT);
+        when(taskRepository.findByIdAndProjectIdAndTenantIdAndTeamId(61L, PROJECT, TENANT, TEAM))
+                .thenReturn(Optional.of(existing));
+        when(taskRepository.save(any(Task.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        final InitiativeResponse response = service.updateHorizon(TENANT, TEAM, PROJECT, 61L,
+                new UpdateInitiativeHorizonRequest(Horizon.NEXT));
+
+        assertThat(response.horizon()).isEqualTo(Horizon.NEXT);
+        assertThat(response.revision()).isZero();
+    }
+
+    @Test
+    void updateHorizon_nullHorizon_throwsInvalidHorizon() {
+        final Task existing = initiativeWith(62L, 1L, TemporalPrecision.QUARTER, null, null, Horizon.NOW);
+        when(taskRepository.findByIdAndProjectIdAndTenantIdAndTeamId(62L, PROJECT, TENANT, TEAM))
+                .thenReturn(Optional.of(existing));
+
+        assertThatExceptionOfType(InvalidHorizonException.class).isThrownBy(() ->
+                service.updateHorizon(TENANT, TEAM, PROJECT, 62L, new UpdateInitiativeHorizonRequest(null)));
+
+        verify(taskRepository, never()).save(any());
+    }
+
+    @Test
+    void updateHorizon_unknownInitiative_throwsInitiativeNotFound() {
+        when(taskRepository.findByIdAndProjectIdAndTenantIdAndTeamId(999L, PROJECT, TENANT, TEAM))
+                .thenReturn(Optional.empty());
+
+        assertThatExceptionOfType(InitiativeNotFoundException.class).isThrownBy(() ->
+                service.updateHorizon(TENANT, TEAM, PROJECT, 999L, new UpdateInitiativeHorizonRequest(Horizon.NOW)));
+    }
+
+    @Test
+    void updateHorizon_taskWithoutLane_isNotAnInitiative_throwsInitiativeNotFound() {
+        final Task plainGanttTask = new Task(TENANT, TEAM, PROJECT, 0, "Detail", NodeKind.LEAF, Boolean.FALSE,
+                TemporalPrecision.DAY, 0);
+        setId(plainGanttTask, 63L);
+        when(taskRepository.findByIdAndProjectIdAndTenantIdAndTeamId(63L, PROJECT, TENANT, TEAM))
+                .thenReturn(Optional.of(plainGanttTask));
+
+        assertThatExceptionOfType(InitiativeNotFoundException.class).isThrownBy(() ->
+                service.updateHorizon(TENANT, TEAM, PROJECT, 63L, new UpdateInitiativeHorizonRequest(Horizon.NOW)));
     }
 }
