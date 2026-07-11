@@ -19,4 +19,15 @@ public interface BaselineSnapshotRepository extends JpaRepository<BaselineSnapsh
      * @return the snapshots (possibly empty)
      */
     List<BaselineSnapshot> findAllByBaselineIdAndTenantId(Long baselineId, Long tenantId);
+
+    /**
+     * Finds all snapshots of the given baseline within the given tenant and team (per-team
+     * portfolio scoping, team_id retrofit).
+     *
+     * @param baselineId the parent {@code pilotage.baseline.id}
+     * @param tenantId   the {@code public.tenants.id} to restrict results to
+     * @param teamId     the {@code public.teams.id} to restrict results to
+     * @return the snapshots (possibly empty)
+     */
+    List<BaselineSnapshot> findAllByBaselineIdAndTenantIdAndTeamId(Long baselineId, Long tenantId, Long teamId);
 }

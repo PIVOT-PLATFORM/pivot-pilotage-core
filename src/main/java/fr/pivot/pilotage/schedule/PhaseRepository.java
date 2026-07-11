@@ -20,6 +20,16 @@ public interface PhaseRepository extends JpaRepository<Phase, Long> {
     List<Phase> findAllByTenantId(Long tenantId);
 
     /**
+     * Finds all phases belonging to the given tenant and team (per-team portfolio scoping,
+     * team_id retrofit).
+     *
+     * @param tenantId the {@code public.tenants.id} to restrict results to
+     * @param teamId   the {@code public.teams.id} to restrict results to
+     * @return the phases owned by that tenant/team (possibly empty)
+     */
+    List<Phase> findAllByTenantIdAndTeamId(Long tenantId, Long teamId);
+
+    /**
      * Finds all phases of the given project within the given tenant.
      *
      * @param projectId the parent {@code pilotage.project.id}
@@ -27,4 +37,15 @@ public interface PhaseRepository extends JpaRepository<Phase, Long> {
      * @return the phases (possibly empty)
      */
     List<Phase> findAllByProjectIdAndTenantId(Long projectId, Long tenantId);
+
+    /**
+     * Finds all phases of the given project within the given tenant and team (per-team portfolio
+     * scoping, team_id retrofit).
+     *
+     * @param projectId the parent {@code pilotage.project.id}
+     * @param tenantId  the {@code public.tenants.id} to restrict results to
+     * @param teamId    the {@code public.teams.id} to restrict results to
+     * @return the phases (possibly empty)
+     */
+    List<Phase> findAllByProjectIdAndTenantIdAndTeamId(Long projectId, Long tenantId, Long teamId);
 }

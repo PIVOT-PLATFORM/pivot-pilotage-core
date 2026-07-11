@@ -19,4 +19,15 @@ public interface CalendarExceptionRepository extends JpaRepository<CalendarExcep
      * @return the exceptions (possibly empty)
      */
     List<CalendarException> findAllByCalendarIdAndTenantId(Long calendarId, Long tenantId);
+
+    /**
+     * Finds all exceptions of the given calendar within the given tenant and team (per-team
+     * portfolio scoping, team_id retrofit).
+     *
+     * @param calendarId the parent {@code pilotage.calendar.id}
+     * @param tenantId   the {@code public.tenants.id} to restrict results to
+     * @param teamId     the {@code public.teams.id} to restrict results to
+     * @return the exceptions (possibly empty)
+     */
+    List<CalendarException> findAllByCalendarIdAndTenantIdAndTeamId(Long calendarId, Long tenantId, Long teamId);
 }

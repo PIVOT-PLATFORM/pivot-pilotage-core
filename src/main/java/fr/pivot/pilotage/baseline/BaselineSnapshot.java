@@ -36,6 +36,10 @@ public class BaselineSnapshot {
     @Column(name = "tenant_id", nullable = false)
     private Long tenantId;
 
+    /** Team that owns this snapshot; used for per-team portfolio scoping. */
+    @Column(name = "team_id", nullable = false)
+    private Long teamId;
+
     /** Owning baseline id (FK {@code pilotage.baseline(id)}). */
     @Column(name = "baseline_id", nullable = false)
     private Long baselineId;
@@ -85,11 +89,13 @@ public class BaselineSnapshot {
      * Minimal constructor for creating a new baseline snapshot.
      *
      * @param tenantId    owning tenant's {@code public.tenants.id}
+     * @param teamId      owning team's {@code public.teams.id}
      * @param baselineId  owning baseline id
      * @param taskId      the task id
      */
-    public BaselineSnapshot(final Long tenantId, final Long baselineId, final Long taskId) {
+    public BaselineSnapshot(final Long tenantId, final Long teamId, final Long baselineId, final Long taskId) {
         this.tenantId = tenantId;
+        this.teamId = teamId;
         this.baselineId = baselineId;
         this.taskId = taskId;
     }
@@ -128,6 +134,15 @@ public class BaselineSnapshot {
      */
     public Long getTenantId() {
         return tenantId;
+    }
+
+    /**
+     * Returns the team identifier.
+     *
+     * @return the team's {@code public.teams.id}
+     */
+    public Long getTeamId() {
+        return teamId;
     }
 
     /**

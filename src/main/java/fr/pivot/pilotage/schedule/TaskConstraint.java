@@ -34,6 +34,10 @@ public class TaskConstraint {
     @Column(name = "tenant_id", nullable = false)
     private Long tenantId;
 
+    /** Team that owns this constraint; used for per-team portfolio scoping. */
+    @Column(name = "team_id", nullable = false)
+    private Long teamId;
+
     /** Constrained task id (FK {@code pilotage.task(id)}, UNIQUE). */
     @Column(name = "task_id", nullable = false)
     private Long taskId;
@@ -67,14 +71,16 @@ public class TaskConstraint {
      * Full constructor for creating a new task constraint.
      *
      * @param tenantId       owning tenant's {@code public.tenants.id}
+     * @param teamId         owning team's {@code public.teams.id}
      * @param taskId         constrained task id
      * @param constraintType the constraint type
      * @param constraintDate the constraint date, or {@code null} for ASAP/ALAP
      * @param deadline       the soft deadline, or {@code null}
      */
-    public TaskConstraint(final Long tenantId, final Long taskId, final ConstraintType constraintType,
-            final Instant constraintDate, final Instant deadline) {
+    public TaskConstraint(final Long tenantId, final Long teamId, final Long taskId,
+            final ConstraintType constraintType, final Instant constraintDate, final Instant deadline) {
         this.tenantId = tenantId;
+        this.teamId = teamId;
         this.taskId = taskId;
         this.constraintType = constraintType;
         this.constraintDate = constraintDate;
@@ -115,6 +121,15 @@ public class TaskConstraint {
      */
     public Long getTenantId() {
         return tenantId;
+    }
+
+    /**
+     * Returns the team identifier.
+     *
+     * @return the team's {@code public.teams.id}
+     */
+    public Long getTeamId() {
+        return teamId;
     }
 
     /**

@@ -43,6 +43,10 @@ public class Task {
     @Column(name = "tenant_id", nullable = false)
     private Long tenantId;
 
+    /** Team that owns this task; used for per-team portfolio scoping. */
+    @Column(name = "team_id", nullable = false)
+    private Long teamId;
+
     /** Owning project id (FK {@code pilotage.project(id)}). */
     @Column(name = "project_id", nullable = false)
     private Long projectId;
@@ -177,6 +181,7 @@ public class Task {
      * they are populated by the scheduling engine (EN22.1b), never at creation.
      *
      * @param tenantId          owning tenant's {@code public.tenants.id}
+     * @param teamId            owning team's {@code public.teams.id}
      * @param projectId         owning project id
      * @param position          display order within the parent
      * @param name              task name (max 512 chars)
@@ -185,10 +190,11 @@ public class Task {
      * @param temporalPrecision effective altitude of the node
      * @param revision          initial revision (typically 0)
      */
-    public Task(final Long tenantId, final Long projectId, final Integer position, final String name,
-            final NodeKind nodeKind, final Boolean sharedInRoadmap, final TemporalPrecision temporalPrecision,
-            final Integer revision) {
+    public Task(final Long tenantId, final Long teamId, final Long projectId, final Integer position,
+            final String name, final NodeKind nodeKind, final Boolean sharedInRoadmap,
+            final TemporalPrecision temporalPrecision, final Integer revision) {
         this.tenantId = tenantId;
+        this.teamId = teamId;
         this.projectId = projectId;
         this.position = position;
         this.name = name;
@@ -232,6 +238,15 @@ public class Task {
      */
     public Long getTenantId() {
         return tenantId;
+    }
+
+    /**
+     * Returns the team identifier.
+     *
+     * @return the team's {@code public.teams.id}
+     */
+    public Long getTeamId() {
+        return teamId;
     }
 
     /**

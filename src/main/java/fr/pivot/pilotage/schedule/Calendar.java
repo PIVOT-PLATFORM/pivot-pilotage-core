@@ -37,6 +37,10 @@ public class Calendar {
     @Column(name = "tenant_id", nullable = false)
     private Long tenantId;
 
+    /** Team that owns this calendar; used for per-team portfolio scoping. */
+    @Column(name = "team_id", nullable = false)
+    private Long teamId;
+
     /** Owning project id, or {@code null} for a reusable tenant/base calendar. */
     @Column(name = "project_id")
     private Long projectId;
@@ -75,15 +79,17 @@ public class Calendar {
      * Full constructor for creating a new calendar.
      *
      * @param tenantId        owning tenant's {@code public.tenants.id}
+     * @param teamId          owning team's {@code public.teams.id}
      * @param projectId       owning project id, or {@code null} for a reusable calendar
      * @param scope           the scope the calendar applies to
      * @param name            calendar name (max 255 chars)
      * @param workingDaysMask Mon..Sun working-days bitmask
      * @param workingTime     working-time ranges as a JSON string
      */
-    public Calendar(final Long tenantId, final Long projectId, final CalendarScope scope,
+    public Calendar(final Long tenantId, final Long teamId, final Long projectId, final CalendarScope scope,
             final String name, final Short workingDaysMask, final String workingTime) {
         this.tenantId = tenantId;
+        this.teamId = teamId;
         this.projectId = projectId;
         this.scope = scope;
         this.name = name;
@@ -125,6 +131,15 @@ public class Calendar {
      */
     public Long getTenantId() {
         return tenantId;
+    }
+
+    /**
+     * Returns the team identifier.
+     *
+     * @return the team's {@code public.teams.id}
+     */
+    public Long getTeamId() {
+        return teamId;
     }
 
     /**

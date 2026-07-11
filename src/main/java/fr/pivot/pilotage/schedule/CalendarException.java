@@ -34,6 +34,10 @@ public class CalendarException {
     @Column(name = "tenant_id", nullable = false)
     private Long tenantId;
 
+    /** Team that owns this exception; used for per-team portfolio scoping. */
+    @Column(name = "team_id", nullable = false)
+    private Long teamId;
+
     /** Calendar this exception belongs to (FK {@code pilotage.calendar(id)}). */
     @Column(name = "calendar_id", nullable = false)
     private Long calendarId;
@@ -67,14 +71,16 @@ public class CalendarException {
      * Full constructor for creating a new calendar exception.
      *
      * @param tenantId      owning tenant's {@code public.tenants.id}
+     * @param teamId        owning team's {@code public.teams.id}
      * @param calendarId    parent {@code pilotage.calendar.id}
      * @param exceptionDate the derogatory day
      * @param working       {@code true} if worked, {@code false} if off
      * @param workingTime   specific working-time JSON, or {@code null}
      */
-    public CalendarException(final Long tenantId, final Long calendarId, final LocalDate exceptionDate,
-            final Boolean working, final String workingTime) {
+    public CalendarException(final Long tenantId, final Long teamId, final Long calendarId,
+            final LocalDate exceptionDate, final Boolean working, final String workingTime) {
         this.tenantId = tenantId;
+        this.teamId = teamId;
         this.calendarId = calendarId;
         this.exceptionDate = exceptionDate;
         this.working = working;
@@ -115,6 +121,15 @@ public class CalendarException {
      */
     public Long getTenantId() {
         return tenantId;
+    }
+
+    /**
+     * Returns the team identifier.
+     *
+     * @return the team's {@code public.teams.id}
+     */
+    public Long getTeamId() {
+        return teamId;
     }
 
     /**

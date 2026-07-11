@@ -31,6 +31,10 @@ public class Phase {
     @Column(name = "tenant_id", nullable = false)
     private Long tenantId;
 
+    /** Team that owns this phase; used for per-team portfolio scoping. */
+    @Column(name = "team_id", nullable = false)
+    private Long teamId;
+
     /** Owning project id (FK {@code pilotage.project(id)}). */
     @Column(name = "project_id", nullable = false)
     private Long projectId;
@@ -63,14 +67,16 @@ public class Phase {
      * Full constructor for creating a new phase.
      *
      * @param tenantId     owning tenant's {@code public.tenants.id}
+     * @param teamId       owning team's {@code public.teams.id}
      * @param projectId    owning project id
      * @param parentTaskId backing root summary task id, or {@code null}
      * @param name         phase name (max 255 chars)
      * @param position     display order
      */
-    public Phase(final Long tenantId, final Long projectId, final Long parentTaskId, final String name,
-            final Integer position) {
+    public Phase(final Long tenantId, final Long teamId, final Long projectId, final Long parentTaskId,
+            final String name, final Integer position) {
         this.tenantId = tenantId;
+        this.teamId = teamId;
         this.projectId = projectId;
         this.parentTaskId = parentTaskId;
         this.name = name;
@@ -111,6 +117,15 @@ public class Phase {
      */
     public Long getTenantId() {
         return tenantId;
+    }
+
+    /**
+     * Returns the team identifier.
+     *
+     * @return the team's {@code public.teams.id}
+     */
+    public Long getTeamId() {
+        return teamId;
     }
 
     /**

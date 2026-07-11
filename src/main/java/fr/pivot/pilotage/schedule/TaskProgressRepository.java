@@ -20,4 +20,15 @@ public interface TaskProgressRepository extends JpaRepository<TaskProgress, Long
      * @return an {@link Optional} with the progress, or empty if none
      */
     Optional<TaskProgress> findByTaskIdAndTenantId(Long taskId, Long tenantId);
+
+    /**
+     * Finds the (at most one) progress record of the given task within the given tenant and team
+     * (per-team portfolio scoping, team_id retrofit).
+     *
+     * @param taskId   the {@code pilotage.task.id}
+     * @param tenantId the {@code public.tenants.id} to restrict results to
+     * @param teamId   the {@code public.teams.id} to restrict results to
+     * @return an {@link Optional} with the progress, or empty if none
+     */
+    Optional<TaskProgress> findByTaskIdAndTenantIdAndTeamId(Long taskId, Long tenantId, Long teamId);
 }

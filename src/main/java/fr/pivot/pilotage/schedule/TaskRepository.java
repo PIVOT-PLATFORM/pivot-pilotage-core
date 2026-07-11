@@ -22,6 +22,16 @@ public interface TaskRepository extends JpaRepository<Task, Long> {
     List<Task> findAllByTenantId(Long tenantId);
 
     /**
+     * Finds all tasks belonging to the given tenant and team (per-team portfolio scoping, team_id
+     * retrofit).
+     *
+     * @param tenantId the {@code public.tenants.id} to restrict results to
+     * @param teamId   the {@code public.teams.id} to restrict results to
+     * @return the tasks owned by that tenant/team (possibly empty)
+     */
+    List<Task> findAllByTenantIdAndTeamId(Long tenantId, Long teamId);
+
+    /**
      * Finds all tasks of the given project within the given tenant.
      *
      * @param projectId the parent {@code pilotage.project.id}
@@ -31,6 +41,17 @@ public interface TaskRepository extends JpaRepository<Task, Long> {
     List<Task> findAllByProjectIdAndTenantId(Long projectId, Long tenantId);
 
     /**
+     * Finds all tasks of the given project within the given tenant and team (per-team portfolio
+     * scoping, team_id retrofit).
+     *
+     * @param projectId the parent {@code pilotage.project.id}
+     * @param tenantId  the {@code public.tenants.id} to restrict results to
+     * @param teamId    the {@code public.teams.id} to restrict results to
+     * @return the tasks (possibly empty)
+     */
+    List<Task> findAllByProjectIdAndTenantIdAndTeamId(Long projectId, Long tenantId, Long teamId);
+
+    /**
      * Finds a task by id, verifying it belongs to the given tenant.
      *
      * @param id       the task id
@@ -38,4 +59,15 @@ public interface TaskRepository extends JpaRepository<Task, Long> {
      * @return an {@link Optional} with the task, or empty if not found for that tenant
      */
     Optional<Task> findByIdAndTenantId(Long id, Long tenantId);
+
+    /**
+     * Finds a task by id, verifying it belongs to the given tenant and team (per-team portfolio
+     * scoping, team_id retrofit).
+     *
+     * @param id       the task id
+     * @param tenantId the expected tenant's {@code public.tenants.id}
+     * @param teamId   the expected team's {@code public.teams.id}
+     * @return an {@link Optional} with the task, or empty if not found for that tenant/team
+     */
+    Optional<Task> findByIdAndTenantIdAndTeamId(Long id, Long tenantId, Long teamId);
 }

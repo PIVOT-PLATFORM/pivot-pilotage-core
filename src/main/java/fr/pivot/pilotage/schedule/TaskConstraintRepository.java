@@ -20,4 +20,15 @@ public interface TaskConstraintRepository extends JpaRepository<TaskConstraint, 
      * @return an {@link Optional} with the constraint, or empty if none
      */
     Optional<TaskConstraint> findByTaskIdAndTenantId(Long taskId, Long tenantId);
+
+    /**
+     * Finds the (at most one) constraint of the given task within the given tenant and team
+     * (per-team portfolio scoping, team_id retrofit).
+     *
+     * @param taskId   the constrained {@code pilotage.task.id}
+     * @param tenantId the {@code public.tenants.id} to restrict results to
+     * @param teamId   the {@code public.teams.id} to restrict results to
+     * @return an {@link Optional} with the constraint, or empty if none
+     */
+    Optional<TaskConstraint> findByTaskIdAndTenantIdAndTeamId(Long taskId, Long tenantId, Long teamId);
 }
