@@ -21,6 +21,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import java.util.List;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
@@ -81,6 +82,9 @@ class WbsTaskControllerIT {
 
     @MockitoBean
     private DependencyService dependencyService;
+
+    @MockitoBean
+    private TaskEffortService taskEffortService;
 
     @MockitoBean
     private WbsEditPolicy editPolicy;
@@ -342,5 +346,154 @@ class WbsTaskControllerIT {
         mockMvc.perform(delete(BASE + "/dependencies/3")).andExpect(status().isForbidden());
 
         verify(dependencyService, never()).delete(anyLong(), anyLong(), anyLong(), anyLong());
+    }
+
+    // ============================ US22.4.2 — duration / effort / mode ============================
+
+    private static TaskSchedulingResponse autoState() {
+        return new TaskSchedulingResponse(TASK, null, fr.pivot.pilotage.schedule.SchedulingMode.AUTO,
+                480, null, null, null, null, null, 0L, 1);
+    }
+
+    private static TaskSchedulingResponse manualState() {
+        return new TaskSchedulingResponse(TASK, fr.pivot.pilotage.schedule.SchedulingMode.MANUAL,
+                fr.pivot.pilotage.schedule.SchedulingMode.MANUAL, 480, null,
+                java.time.Instant.parse("2024-01-04T09:00:00Z"), java.time.Instant.parse("2024-01-04T17:00:00Z"),
+                java.time.Instant.parse("2024-01-04T09:00:00Z"), java.time.Instant.parse("2024-01-02T09:00:00Z"),
+                960L, 2);
+    }
+
+    // -------- duration: gated write → 403, service never called ---------------------------------
+
+    @Test
+    void setDuration_unauthorized_returns403_andServiceNeverCalled() throws Exception {
+        when(editPolicy.isAuthorized()).thenReturn(false);
+
+        mockMvc.perform(patch(BASE + "/tasks/" + TASK + "/duration")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"durationMinutes\":480}"))
+                .andExpect(status().isForbidden());
+
+        verify(taskEffortService, never()).setDuration(anyLong(), anyLong(), anyLong(), anyLong(), anyInt());
+    }
+
+    // -------- duration: authorized → 200, delegates ---------------------------------------------
+
+    @Test
+    void setDuration_authorized_returns200() throws Exception {
+        when(editPolicy.isAuthorized()).thenReturn(true);
+        when(taskEffortService.setDuration(TENANT, TEAM, PROJECT, TASK, 480)).thenReturn(autoState());
+
+        mockMvc.perform(patch(BASE + "/tasks/" + TASK + "/duration")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"durationMinutes\":480}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.effectiveMode").value("AUTO"))
+                .andExpect(jsonPath("$.durationMinutes").value(480));
+    }
+
+    // -------- duration Error: negative → 422 (service guard) -------------------------------------
+
+    @Test
+    void setDuration_negative_returns422() throws Exception {
+        when(editPolicy.isAuthorized()).thenReturn(true);
+        when(taskEffortService.setDuration(TENANT, TEAM, PROJECT, TASK, -1))
+                .thenThrow(InvalidTaskEffortException.negativeDuration(-1));
+
+        mockMvc.perform(patch(BASE + "/tasks/" + TASK + "/duration")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"durationMinutes\":-1}"))
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(jsonPath("$.code").value(InvalidTaskEffortException.CODE));
+    }
+
+    // -------- duration Error: a derived engine field in the body → 422 --------------------------
+
+    @Test
+    void setDuration_withDerivedField_returns422_andServiceNeverCalled() throws Exception {
+        when(editPolicy.isAuthorized()).thenReturn(true);
+
+        mockMvc.perform(patch(BASE + "/tasks/" + TASK + "/duration")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"durationMinutes\":480,\"isCritical\":true}"))
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(jsonPath("$.code").value(DerivedFieldNotEditableException.CODE));
+
+        verify(taskEffortService, never()).setDuration(anyLong(), anyLong(), anyLong(), anyLong(), anyInt());
+    }
+
+    // -------- duration Security: cross-tenant → 404 ---------------------------------------------
+
+    @Test
+    void setDuration_crossTenant_returns404() throws Exception {
+        when(editPolicy.isAuthorized()).thenReturn(true);
+        when(taskEffortService.setDuration(TENANT, TEAM, PROJECT, TASK, 480))
+                .thenThrow(new WbsProjectNotFoundException(PROJECT, TENANT, TEAM));
+
+        mockMvc.perform(patch(BASE + "/tasks/" + TASK + "/duration")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"durationMinutes\":480}"))
+                .andExpect(status().isNotFound());
+    }
+
+    // -------- effort: authorized → 200, delegates -----------------------------------------------
+
+    @Test
+    void setEffort_authorized_returns200() throws Exception {
+        when(editPolicy.isAuthorized()).thenReturn(true);
+        when(taskEffortService.setEffort(eq(TENANT), eq(TEAM), eq(PROJECT), eq(TASK), eq("alice"), any()))
+                .thenReturn(autoState());
+
+        mockMvc.perform(patch(BASE + "/tasks/" + TASK + "/effort")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"resourceRef\":\"alice\",\"unitsPercent\":50}"))
+                .andExpect(status().isOk());
+    }
+
+    // -------- effort Error: non-positive units → 422 --------------------------------------------
+
+    @Test
+    void setEffort_nonPositiveUnits_returns422() throws Exception {
+        when(editPolicy.isAuthorized()).thenReturn(true);
+        when(taskEffortService.setEffort(eq(TENANT), eq(TEAM), eq(PROJECT), eq(TASK), eq("alice"), any()))
+                .thenThrow(InvalidTaskEffortException.nonPositiveUnits());
+
+        mockMvc.perform(patch(BASE + "/tasks/" + TASK + "/effort")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"resourceRef\":\"alice\",\"unitsPercent\":0}"))
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(jsonPath("$.code").value(InvalidTaskEffortException.CODE));
+    }
+
+    // -------- scheduling-mode: gated write → 403 ------------------------------------------------
+
+    @Test
+    void setSchedulingMode_unauthorized_returns403() throws Exception {
+        when(editPolicy.isAuthorized()).thenReturn(false);
+
+        mockMvc.perform(patch(BASE + "/tasks/" + TASK + "/scheduling-mode")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"schedulingMode\":\"MANUAL\"}"))
+                .andExpect(status().isForbidden());
+
+        verify(taskEffortService, never()).setSchedulingMode(anyLong(), anyLong(), anyLong(), anyLong(), any());
+    }
+
+    // -------- scheduling-mode: MANUAL → 200 exposing the manual variance ------------------------
+
+    @Test
+    void setSchedulingMode_manual_returns200WithVariance() throws Exception {
+        when(editPolicy.isAuthorized()).thenReturn(true);
+        when(taskEffortService.setSchedulingMode(eq(TENANT), eq(TEAM), eq(PROJECT), eq(TASK),
+                eq(fr.pivot.pilotage.schedule.SchedulingMode.MANUAL))).thenReturn(manualState());
+
+        mockMvc.perform(patch(BASE + "/tasks/" + TASK + "/scheduling-mode")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"schedulingMode\":\"MANUAL\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.schedulingMode").value("MANUAL"))
+                .andExpect(jsonPath("$.plannedManual").value("2024-01-04T09:00:00Z"))
+                .andExpect(jsonPath("$.wouldBeAuto").value("2024-01-02T09:00:00Z"))
+                .andExpect(jsonPath("$.deltaMinutes").value(960));
     }
 }

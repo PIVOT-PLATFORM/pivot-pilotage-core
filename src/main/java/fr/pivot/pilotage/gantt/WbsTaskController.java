@@ -41,6 +41,12 @@ import org.springframework.web.bind.annotation.RestController;
  *       rejected {@code 409 SCHEDULE_CYCLE}, a duplicate {@code 409}, a self-link {@code 422}.</li>
  *   <li>{@code PUT    .../gantt/dependencies/{dependencyId}} — retype/relag a link (write, gated).</li>
  *   <li>{@code DELETE .../gantt/dependencies/{dependencyId}} — remove a link (write, gated).</li>
+ *   <li>{@code PATCH  .../gantt/tasks/{taskId}/duration} — set the duration (US22.4.2, write, gated).
+ *       A negative or non-milestone-zero value is rejected {@code 422}.</li>
+ *   <li>{@code PATCH  .../gantt/tasks/{taskId}/effort} — set an assignment's units, re-deriving
+ *       work = duration × units (US22.4.2, write, gated). Non-positive units → {@code 422}.</li>
+ *   <li>{@code PATCH  .../gantt/tasks/{taskId}/scheduling-mode} — toggle AUTO/MANUAL, exposing the
+ *       manual variance (US22.4.2, write, gated).</li>
  * </ul>
  */
 @RestController
@@ -49,6 +55,7 @@ public class WbsTaskController {
 
     private final WbsTaskService wbsTaskService;
     private final DependencyService dependencyService;
+    private final TaskEffortService taskEffortService;
     private final WbsEditPolicy editPolicy;
 
     /**
@@ -56,13 +63,15 @@ public class WbsTaskController {
      *
      * @param wbsTaskService    the WBS business logic
      * @param dependencyService the typed-dependency business logic (US22.4.3)
+     * @param taskEffortService the duration/effort/scheduling-mode business logic (US22.4.2)
      * @param editPolicy        the role-gate extension point for writes (deny-all until the starter
      *                          publishes membership, mirrors {@code RoadmapEditPolicy})
      */
     public WbsTaskController(final WbsTaskService wbsTaskService, final DependencyService dependencyService,
-            final WbsEditPolicy editPolicy) {
+            final TaskEffortService taskEffortService, final WbsEditPolicy editPolicy) {
         this.wbsTaskService = wbsTaskService;
         this.dependencyService = dependencyService;
+        this.taskEffortService = taskEffortService;
         this.editPolicy = editPolicy;
     }
 
@@ -231,6 +240,71 @@ public class WbsTaskController {
         requireEditAuthorized();
         dependencyService.delete(tenantId, teamId, projectId, dependencyId);
         return ResponseEntity.noContent().build();
+    }
+
+    /**
+     * Sets a task's duration in worked minutes and re-runs the CPM (US22.4.2, write, gated).
+     *
+     * @param tenantId  the tenant's {@code public.tenants.id}
+     * @param teamId    the team's {@code public.teams.id}
+     * @param projectId the project id
+     * @param taskId    the task to edit
+     * @param request   the duration payload
+     * @return {@code 200 OK} with the refreshed scheduling state; {@code 403} if unauthorized;
+     *         {@code 404} if not visible; {@code 422} if the duration is negative, zero on a
+     *         non-milestone, or if a derived engine field is supplied
+     */
+    @PatchMapping("/tasks/{taskId}/duration")
+    public ResponseEntity<TaskSchedulingResponse> setDuration(@PathVariable final long tenantId,
+            @PathVariable final long teamId, @PathVariable final long projectId,
+            @PathVariable final long taskId, @Valid @RequestBody final UpdateTaskDurationRequest request) {
+        requireEditAuthorized();
+        return ResponseEntity.ok(taskEffortService.setDuration(tenantId, teamId, projectId, taskId,
+                request.durationMinutes()));
+    }
+
+    /**
+     * Sets a task assignment's resource units, re-deriving work = duration × units, and re-runs the
+     * CPM (US22.4.2, write, gated).
+     *
+     * @param tenantId  the tenant's {@code public.tenants.id}
+     * @param teamId    the team's {@code public.teams.id}
+     * @param projectId the project id
+     * @param taskId    the task to edit
+     * @param request   the effort payload (resource reference + units percent)
+     * @return {@code 200 OK} with the refreshed scheduling state (its {@code workMinutes} reflecting
+     *         the relation); {@code 403} if unauthorized; {@code 404} if not visible; {@code 422} if
+     *         the units are non-positive or if a derived engine field is supplied
+     */
+    @PatchMapping("/tasks/{taskId}/effort")
+    public ResponseEntity<TaskSchedulingResponse> setEffort(@PathVariable final long tenantId,
+            @PathVariable final long teamId, @PathVariable final long projectId,
+            @PathVariable final long taskId, @Valid @RequestBody final UpdateTaskEffortRequest request) {
+        requireEditAuthorized();
+        return ResponseEntity.ok(taskEffortService.setEffort(tenantId, teamId, projectId, taskId,
+                request.resourceRef(), request.unitsPercent()));
+    }
+
+    /**
+     * Switches a task between AUTO and MANUAL scheduling and re-runs the CPM (US22.4.2, write,
+     * gated). The response exposes the manual variance ({@code plannedManual}/{@code wouldBeAuto}/
+     * {@code deltaMinutes}) when the task is MANUAL.
+     *
+     * @param tenantId  the tenant's {@code public.tenants.id}
+     * @param teamId    the team's {@code public.teams.id}
+     * @param projectId the project id
+     * @param taskId    the task to edit
+     * @param request   the mode payload
+     * @return {@code 200 OK} with the refreshed scheduling state (with the variance when MANUAL);
+     *         {@code 403} if unauthorized; {@code 404} if not visible
+     */
+    @PatchMapping("/tasks/{taskId}/scheduling-mode")
+    public ResponseEntity<TaskSchedulingResponse> setSchedulingMode(@PathVariable final long tenantId,
+            @PathVariable final long teamId, @PathVariable final long projectId,
+            @PathVariable final long taskId, @Valid @RequestBody final UpdateSchedulingModeRequest request) {
+        requireEditAuthorized();
+        return ResponseEntity.ok(taskEffortService.setSchedulingMode(tenantId, teamId, projectId, taskId,
+                request.schedulingMode()));
     }
 
     /**
