@@ -5,13 +5,23 @@
                     https://raw.githubusercontent.com/spotbugs/spotbugs/3.1.0/spotbugs/etc/findbugsfilter.xsd">
 
     <!--
-        Squelette repris de pivot-core (même structure de filtre SpotBugs). Aucune exclusion
-        de package pour l'instant : ce repo ne contient encore aucune entité JPA, aucun
-        service/contrôleur constructeur-injecté — rien qui justifierait une exclusion
-        EI_EXPOSE_REP/EI_EXPOSE_REP2 (cf. pivot-core/spotbugs-exclude.xml pour le
-        raisonnement type). À compléter au fil des premières US Pilotage (roadmap, Gantt,
-        portefeuille) avec les mêmes patterns : entités JPA (fr.pivot.pilotage.*.entity) et
-        beans singleton constructeur-injectés (fr.pivot.pilotage.*.service/.controller).
+        Squelette repris de pivot-core (même structure de filtre SpotBugs). À compléter au fil
+        des premières US Pilotage (roadmap, Gantt, portefeuille) avec les mêmes patterns :
+        entités JPA et beans singleton constructeur-injectés
+        (fr.pivot.pilotage.*.service/.controller), cf. pivot-core/spotbugs-exclude.xml pour le
+        raisonnement type.
+
+        EI_EXPOSE_REP / EI_EXPOSE_REP2 :
+          - Les entités JPA exigent des getters/setters mutables pour le fournisseur de
+            persistance (Hibernate) ; des copies défensives casseraient le dirty-checking.
+            Décision de conception intentionnelle, pas un bug.
     -->
+    <Match>
+        <Bug pattern="EI_EXPOSE_REP,EI_EXPOSE_REP2"/>
+        <Or>
+            <!-- EN18.1 — Application / Project : entités JPA du socle Pilotage. -->
+            <Package name="fr.pivot.pilotage.project"/>
+        </Or>
+    </Match>
 
 </FindBugsFilter>
