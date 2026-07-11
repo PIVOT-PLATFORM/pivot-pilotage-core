@@ -4,6 +4,8 @@ import fr.pivot.pilotage.project.Application;
 import fr.pivot.pilotage.project.ApplicationRepository;
 import fr.pivot.pilotage.project.Project;
 import fr.pivot.pilotage.project.ProjectRepository;
+import fr.pivot.pilotage.schedule.Horizon;
+import fr.pivot.pilotage.schedule.TemporalPrecision;
 import fr.pivot.pilotage.testsupport.PlatformSchemaTestSupport;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -95,7 +97,7 @@ class RoadmapServiceIT {
         final LaneResponse laneA = roadmapService.createLane(tenantId, teamId, projectId, new CreateLaneRequest("Theme A"));
 
         final InitiativeResponse created = roadmapService.createInitiative(tenantId, teamId, projectId,
-                new CreateInitiativeRequest("Launch v1", laneA.id(), null, null, null));
+                new CreateInitiativeRequest("Launch v1", laneA.id(), null, null, null, null));
 
         assertThat(created.fuzzyPeriodStart()).isNull();
         assertThat(created.fuzzyPeriodEnd()).isNull();
@@ -110,7 +112,7 @@ class RoadmapServiceIT {
     void updatePlacement_resizesInitiativePeriod() {
         final LaneResponse lane = roadmapService.createLane(tenantId, teamId, projectId, new CreateLaneRequest("Theme A"));
         final InitiativeResponse created = roadmapService.createInitiative(tenantId, teamId, projectId,
-                new CreateInitiativeRequest("Launch v1", lane.id(), null, null, null));
+                new CreateInitiativeRequest("Launch v1", lane.id(), null, null, null, null));
 
         final LocalDate start = LocalDate.of(2026, 1, 1);
         final LocalDate end = LocalDate.of(2026, 3, 31);
@@ -128,7 +130,7 @@ class RoadmapServiceIT {
     void createInitiative_unknownLane_rejected() {
         assertThatExceptionOfType(LaneNotFoundException.class).isThrownBy(() ->
                 roadmapService.createInitiative(tenantId, teamId, projectId,
-                        new CreateInitiativeRequest("No lane", 999_999L, null, null, null)));
+                        new CreateInitiativeRequest("No lane", 999_999L, null, null, null, null)));
     }
 
     // -------- Error case (schema): duplicate lane label on the same project is rejected -----------
@@ -182,7 +184,146 @@ class RoadmapServiceIT {
         // initiative under a different project (B), even within a different tenant scope entirely.
         assertThatExceptionOfType(LaneNotFoundException.class).isThrownBy(() ->
                 roadmapService.createInitiative(otherTenant, otherTeam, otherProjectId,
-                        new CreateInitiativeRequest("Smuggled", ownLane.id(), null, null, null)));
+                        new CreateInitiativeRequest("Smuggled", ownLane.id(), null, null, null, null)));
+    }
+
+    // -------- scale (US22.3.2) ---------------------------------------------------------------------
+
+    // -------- AC: default scale comes from the tenant's default profile (EN18.10) ------------------
+
+    @Test
+    void getScale_freshProject_derivesDefaultFromProfile() {
+        final RoadmapScaleResponse scale = roadmapService.getScale(tenantId, teamId, projectId);
+
+        // Versioned default profile altitude is MACRO ⇒ QUARTER scale, and it is not an explicit setting.
+        assertThat(scale.scale()).isEqualTo(TemporalPrecision.QUARTER);
+        assertThat(scale.explicit()).isFalse();
+    }
+
+    // -------- AC: choosing a scale aligns bars on period bounds, not on day-precise dates ----------
+
+    @Test
+    void updateScale_thenListInitiatives_snapsBarsToChosenScale() {
+        final LaneResponse lane = roadmapService.createLane(tenantId, teamId, projectId, new CreateLaneRequest("Theme A"));
+        roadmapService.createInitiative(tenantId, teamId, projectId, new CreateInitiativeRequest(
+                "Feb push", lane.id(), LocalDate.of(2026, 2, 10), LocalDate.of(2026, 2, 20), null, null));
+
+        roadmapService.updateScale(tenantId, teamId, projectId, new UpdateRoadmapScaleRequest(TemporalPrecision.MONTH));
+
+        final InitiativeResponse only = roadmapService.listInitiatives(tenantId, teamId, projectId).get(0);
+        // Raw period preserved; bar snapped to the whole month of February.
+        assertThat(only.fuzzyPeriodStart()).isEqualTo(LocalDate.of(2026, 2, 10));
+        assertThat(only.periodBounds().start()).isEqualTo(LocalDate.of(2026, 2, 1));
+        assertThat(only.periodBounds().end()).isEqualTo(LocalDate.of(2026, 2, 28));
+    }
+
+    // -------- Error AC: changing scale never deletes/truncates existing period data ----------------
+
+    @Test
+    void updateScale_doesNotAlterStoredInitiativePeriods() {
+        final LaneResponse lane = roadmapService.createLane(tenantId, teamId, projectId, new CreateLaneRequest("Theme A"));
+        final InitiativeResponse created = roadmapService.createInitiative(tenantId, teamId, projectId,
+                new CreateInitiativeRequest("Q1", lane.id(), LocalDate.of(2026, 1, 5), LocalDate.of(2026, 3, 25),
+                        null, null));
+
+        // Switch QUARTER → MONTH → DAY; the stored fuzzy period must survive untouched.
+        roadmapService.updateScale(tenantId, teamId, projectId, new UpdateRoadmapScaleRequest(TemporalPrecision.MONTH));
+        roadmapService.updateScale(tenantId, teamId, projectId, new UpdateRoadmapScaleRequest(TemporalPrecision.DAY));
+
+        final InitiativeResponse reread = roadmapService.listInitiatives(tenantId, teamId, projectId).stream()
+                .filter(i -> i.id() == created.id()).findFirst().orElseThrow();
+        assertThat(reread.fuzzyPeriodStart()).isEqualTo(LocalDate.of(2026, 1, 5));
+        assertThat(reread.fuzzyPeriodEnd()).isEqualTo(LocalDate.of(2026, 3, 25));
+        // At DAY scale the bar equals the raw period exactly (no snapping loss).
+        assertThat(reread.periodBounds().start()).isEqualTo(LocalDate.of(2026, 1, 5));
+        assertThat(reread.periodBounds().end()).isEqualTo(LocalDate.of(2026, 3, 25));
+    }
+
+    @Test
+    void updateScale_roundTripsAsExplicitSetting() {
+        roadmapService.updateScale(tenantId, teamId, projectId,
+                new UpdateRoadmapScaleRequest(TemporalPrecision.SEMESTER));
+
+        final RoadmapScaleResponse scale = roadmapService.getScale(tenantId, teamId, projectId);
+        assertThat(scale.scale()).isEqualTo(TemporalPrecision.SEMESTER);
+        assertThat(scale.explicit()).isTrue();
+    }
+
+    // -------- Security AC: scale is per-roadmap and cross-tenant isolated (404-equivalent) ---------
+
+    @Test
+    void crossTenant_scaleNotReadableUnderForeignProject() throws Exception {
+        final long otherTenant = seedTenant();
+        final long otherTeam = seedTeam(otherTenant);
+
+        assertThatExceptionOfType(ProjectNotFoundException.class).isThrownBy(() ->
+                roadmapService.getScale(otherTenant, otherTeam, projectId));
+    }
+
+    // -------- Now / Next / Later (US22.3.3) --------------------------------------------------------
+
+    // -------- AC: a freshly created initiative defaults to the NOW bucket --------------------------
+
+    @Test
+    void createInitiative_defaultsHorizonToNow() {
+        final LaneResponse lane = roadmapService.createLane(tenantId, teamId, projectId, new CreateLaneRequest("Theme A"));
+
+        final InitiativeResponse created = roadmapService.createInitiative(tenantId, teamId, projectId,
+                new CreateInitiativeRequest("Default bucket", lane.id(), null, null, null, null));
+
+        assertThat(created.horizon()).isEqualTo(Horizon.NOW);
+    }
+
+    // -------- AC: initiatives are ranged in columns by horizon ------------------------------------
+
+    @Test
+    void listHorizonView_rangesInitiativesInColumnsByHorizon() {
+        final LaneResponse lane = roadmapService.createLane(tenantId, teamId, projectId, new CreateLaneRequest("Theme A"));
+        final InitiativeResponse now = roadmapService.createInitiative(tenantId, teamId, projectId,
+                new CreateInitiativeRequest("Now item", lane.id(), null, null, null, Horizon.NOW));
+        final InitiativeResponse later = roadmapService.createInitiative(tenantId, teamId, projectId,
+                new CreateInitiativeRequest("Later item", lane.id(), null, null, null, Horizon.LATER));
+
+        final HorizonViewResponse view = roadmapService.listHorizonView(tenantId, teamId, projectId);
+
+        assertThat(view.buckets()).extracting(HorizonBucketResponse::horizon)
+                .containsExactly(Horizon.NOW, Horizon.NEXT, Horizon.LATER);
+        assertThat(view.buckets().get(0).initiatives()).extracting(InitiativeResponse::id).containsExactly(now.id());
+        assertThat(view.buckets().get(2).initiatives()).extracting(InitiativeResponse::id).containsExactly(later.id());
+    }
+
+    // -------- AC: dragging an initiative to another bucket updates its horizon ---------------------
+
+    @Test
+    void updateHorizon_movesInitiativeToAnotherBucket() {
+        final LaneResponse lane = roadmapService.createLane(tenantId, teamId, projectId, new CreateLaneRequest("Theme A"));
+        final InitiativeResponse created = roadmapService.createInitiative(tenantId, teamId, projectId,
+                new CreateInitiativeRequest("Movable", lane.id(), null, null, null, Horizon.NOW));
+
+        final InitiativeResponse moved = roadmapService.updateHorizon(tenantId, teamId, projectId, created.id(),
+                new UpdateInitiativeHorizonRequest(Horizon.NEXT));
+
+        assertThat(moved.horizon()).isEqualTo(Horizon.NEXT);
+        assertThat(moved.revision()).isEqualTo(created.revision() + 1);
+
+        final HorizonViewResponse view = roadmapService.listHorizonView(tenantId, teamId, projectId);
+        assertThat(view.buckets().get(1).initiatives()).extracting(InitiativeResponse::id).containsExactly(created.id());
+    }
+
+    // -------- Security AC: horizon move is cross-tenant isolated (404-equivalent) ------------------
+
+    @Test
+    void crossTenant_horizonNotChangeableUnderForeignProject() throws Exception {
+        final LaneResponse lane = roadmapService.createLane(tenantId, teamId, projectId, new CreateLaneRequest("Theme A"));
+        final InitiativeResponse created = roadmapService.createInitiative(tenantId, teamId, projectId,
+                new CreateInitiativeRequest("Mine", lane.id(), null, null, null, Horizon.NOW));
+        final long otherTenant = seedTenant();
+        final long otherTeam = seedTeam(otherTenant);
+        final long otherProjectId = newProject(otherTenant, otherTeam).getId();
+
+        assertThatExceptionOfType(InitiativeNotFoundException.class).isThrownBy(() ->
+                roadmapService.updateHorizon(otherTenant, otherTeam, otherProjectId, created.id(),
+                        new UpdateInitiativeHorizonRequest(Horizon.LATER)));
     }
 
     // -------- milestones (US22.3.4) ----------------------------------------------------------------
@@ -248,7 +389,7 @@ class RoadmapServiceIT {
     void createMilestone_dateOutsideProjectFootprint_rejected() {
         final LaneResponse lane = roadmapService.createLane(tenantId, teamId, projectId, new CreateLaneRequest("Theme A"));
         roadmapService.createInitiative(tenantId, teamId, projectId, new CreateInitiativeRequest(
-                "Only initiative", lane.id(), LocalDate.of(2026, 1, 1), LocalDate.of(2026, 6, 30), null));
+                "Only initiative", lane.id(), LocalDate.of(2026, 1, 1), LocalDate.of(2026, 6, 30), null, null));
 
         final InvalidMilestoneDateException ex = org.junit.jupiter.api.Assertions.assertThrows(
                 InvalidMilestoneDateException.class, () -> roadmapService.createMilestone(
