@@ -34,6 +34,18 @@
     </Match>
 
     <!--
+        EI_EXPOSE_REP2 sur les contrôleurs Gantt (US22.4.x) : stockent des beans Spring singleton
+        constructeur-injectés (WbsTaskService, WbsEditPolicy) — état géré par le conteneur, non
+        mutable de l'extérieur ; en faire une copie défensive n'aurait aucun sens. Décision de
+        conception (composant Spring), pas un bug. Les DTOs/records du package gantt prennent des
+        copies défensives et restent couverts par le check hors de cette exclusion ciblée.
+    -->
+    <Match>
+        <Bug pattern="EI_EXPOSE_REP,EI_EXPOSE_REP2"/>
+        <Class name="fr.pivot.pilotage.gantt.WbsTaskController"/>
+    </Match>
+
+    <!--
         NM_CLASS_NOT_EXCEPTION : l'entité JPA `CalendarException` modélise un jour dérogatoire
         de calendrier (férié / ouvré exceptionnel), pas une exception Java. Le nom est un terme
         métier (table `pilotage.calendar_exception`), pas une erreur de conception.
