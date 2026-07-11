@@ -31,6 +31,17 @@ public interface ProjectRepository extends JpaRepository<Project, Long> {
     List<Project> findAllByApplicationId(Long applicationId);
 
     /**
+     * Finds all projects of the given application within the given tenant (EN18.9). Tenant-scoped
+     * variant used by the "consolidation by Application" contract so no read path crosses the tenant
+     * boundary.
+     *
+     * @param applicationId the parent {@code pilotage.application.id}
+     * @param tenantId      the {@code public.tenants.id} to restrict results to
+     * @return the projects (possibly empty)
+     */
+    List<Project> findAllByApplicationIdAndTenantId(Long applicationId, Long tenantId);
+
+    /**
      * Finds a project by its identifier, verifying it belongs to the given tenant.
      *
      * <p>Returns {@link Optional#empty()} if the project does not exist or belongs to a
