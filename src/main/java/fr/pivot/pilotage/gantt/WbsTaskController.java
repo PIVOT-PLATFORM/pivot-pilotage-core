@@ -1,0 +1,160 @@
+package fr.pivot.pilotage.gantt;
+
+import jakarta.validation.Valid;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+/**
+ * REST controller exposing the WBS (Work Breakdown Structure) of a project's detailed Gantt
+ * (F22.4 — US22.4.1a modèle arborescent &amp; numérotation, US22.4.1b indent/outdent &amp;
+ * réordonnancement, US22.4.1c agrégation des tâches récapitulatives). Thin by design (CLAUDE.md
+ * §Standards): the role gate is delegated to {@link WbsEditPolicy} and every operation to
+ * {@link WbsTaskService}; errors are mapped by {@link WbsExceptionHandler}.
+ *
+ * <p><strong>URL shape — gap-era, mirrors {@code RoadmapController}.</strong>
+ * {@code pivot-core-starter} (TenantContext) is not published (CLAUDE.md §gap, TODO-SETUP §5), so
+ * {@code tenantId}/{@code teamId} are explicit path variables here too — never a body/query param.
+ * Once the starter is consumable they move to the security context with no change to
+ * {@link WbsTaskService}. Prefix is consistent with roadmap:
+ * {@code /tenants/{tenantId}/teams/{teamId}/projects/{projectId}/gantt}.
+ *
+ * <p><strong>Contract</strong>
+ * <ul>
+ *   <li>{@code GET  .../gantt/tree} — read the ordered WBS tree (role="tree" + treeitems).</li>
+ *   <li>{@code POST .../gantt/tasks} — create a task, optionally under a parent (write, gated). A
+ *       body carrying {@code wbsCode} is rejected {@code 422} (derived field).</li>
+ *   <li>{@code PATCH .../gantt/tasks/{taskId}/indent} — indent (write, gated).</li>
+ *   <li>{@code PATCH .../gantt/tasks/{taskId}/outdent} — outdent (write, gated).</li>
+ *   <li>{@code PATCH .../gantt/tasks/{taskId}/move} — combined reparent/reorder (write, gated).</li>
+ * </ul>
+ */
+@RestController
+@RequestMapping("/tenants/{tenantId}/teams/{teamId}/projects/{projectId}/gantt")
+public class WbsTaskController {
+
+    private final WbsTaskService wbsTaskService;
+    private final WbsEditPolicy editPolicy;
+
+    /**
+     * Constructs the controller.
+     *
+     * @param wbsTaskService the WBS business logic
+     * @param editPolicy     the role-gate extension point for writes (deny-all until the starter
+     *                       publishes membership, mirrors {@code RoadmapEditPolicy})
+     */
+    public WbsTaskController(final WbsTaskService wbsTaskService, final WbsEditPolicy editPolicy) {
+        this.wbsTaskService = wbsTaskService;
+        this.editPolicy = editPolicy;
+    }
+
+    /**
+     * Reads a project's ordered WBS tree.
+     *
+     * @param tenantId  the tenant's {@code public.tenants.id}
+     * @param teamId    the team's {@code public.teams.id}
+     * @param projectId the project id
+     * @return {@code 200 OK} with the ordered tree; {@code 404} if the project is not visible
+     */
+    @GetMapping("/tree")
+    public ResponseEntity<WbsTreeResponse> tree(@PathVariable final long tenantId,
+            @PathVariable final long teamId, @PathVariable final long projectId) {
+        return ResponseEntity.ok(wbsTaskService.tree(tenantId, teamId, projectId));
+    }
+
+    /**
+     * Creates a task in the project's WBS, optionally under a parent. The WBS code is derived
+     * server-side; a client-supplied {@code wbsCode} is rejected {@code 422}.
+     *
+     * @param tenantId  the tenant's {@code public.tenants.id}
+     * @param teamId    the team's {@code public.teams.id}
+     * @param projectId the project id
+     * @param request   the creation payload
+     * @return {@code 201 Created} with the created (numbered) task; {@code 403} if unauthorized;
+     *         {@code 404} if the project or the parent is not visible; {@code 422} if a derived
+     *         field is supplied
+     */
+    @PostMapping("/tasks")
+    public ResponseEntity<WbsTaskResponse> createTask(@PathVariable final long tenantId,
+            @PathVariable final long teamId, @PathVariable final long projectId,
+            @Valid @RequestBody final CreateWbsTaskRequest request) {
+        requireEditAuthorized();
+        return ResponseEntity.status(HttpStatus.CREATED)
+                .body(wbsTaskService.createTask(tenantId, teamId, projectId, request));
+    }
+
+    /**
+     * Indents a task (it becomes a sub-task of its preceding sibling); the WBS is re-derived.
+     *
+     * @param tenantId  the tenant's {@code public.tenants.id}
+     * @param teamId    the team's {@code public.teams.id}
+     * @param projectId the project id
+     * @param taskId    the task to indent
+     * @return {@code 200 OK} with the re-numbered task; {@code 403} if unauthorized; {@code 404} if
+     *         not visible; {@code 422} if the task is the first of the plan (no possible parent)
+     */
+    @PatchMapping("/tasks/{taskId}/indent")
+    public ResponseEntity<WbsTaskResponse> indent(@PathVariable final long tenantId,
+            @PathVariable final long teamId, @PathVariable final long projectId,
+            @PathVariable final long taskId) {
+        requireEditAuthorized();
+        return ResponseEntity.ok(wbsTaskService.indent(tenantId, teamId, projectId, taskId));
+    }
+
+    /**
+     * Outdents a task (it rises one level); the WBS is re-derived.
+     *
+     * @param tenantId  the tenant's {@code public.tenants.id}
+     * @param teamId    the team's {@code public.teams.id}
+     * @param projectId the project id
+     * @param taskId    the task to outdent
+     * @return {@code 200 OK} with the re-numbered task; {@code 403} if unauthorized; {@code 404} if
+     *         not visible; {@code 422} if the task is already at the WBS root
+     */
+    @PatchMapping("/tasks/{taskId}/outdent")
+    public ResponseEntity<WbsTaskResponse> outdent(@PathVariable final long tenantId,
+            @PathVariable final long teamId, @PathVariable final long projectId,
+            @PathVariable final long taskId) {
+        requireEditAuthorized();
+        return ResponseEntity.ok(wbsTaskService.outdent(tenantId, teamId, projectId, taskId));
+    }
+
+    /**
+     * Moves a task: reparent (including to the WBS root via {@link MoveWbsTaskRequest#ROOT}) and/or
+     * reorder among its siblings; the WBS is re-derived.
+     *
+     * @param tenantId  the tenant's {@code public.tenants.id}
+     * @param teamId    the team's {@code public.teams.id}
+     * @param projectId the project id
+     * @param taskId    the task to move
+     * @param request   the move payload
+     * @return {@code 200 OK} with the re-numbered task; {@code 403} if unauthorized; {@code 404} if
+     *         the task or a supplied parent is not visible; {@code 409} if the move creates a
+     *         hierarchy cycle (decision D4)
+     */
+    @PatchMapping("/tasks/{taskId}/move")
+    public ResponseEntity<WbsTaskResponse> move(@PathVariable final long tenantId,
+            @PathVariable final long teamId, @PathVariable final long projectId,
+            @PathVariable final long taskId, @RequestBody final MoveWbsTaskRequest request) {
+        requireEditAuthorized();
+        return ResponseEntity.ok(wbsTaskService.move(tenantId, teamId, projectId, taskId, request));
+    }
+
+    /**
+     * Short-circuits every write endpoint before any service call when the caller is not authorized
+     * (security AC — fail-closed today, see {@link DenyAllWbsEditPolicy}).
+     *
+     * @throws WbsEditForbiddenException if the current caller is not authorized
+     */
+    private void requireEditAuthorized() {
+        if (!editPolicy.isAuthorized()) {
+            throw new WbsEditForbiddenException();
+        }
+    }
+}
