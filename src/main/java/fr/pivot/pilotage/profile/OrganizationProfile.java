@@ -27,6 +27,15 @@ import fr.pivot.pilotage.schedule.projection.Altitude;
  * falls back to the versioned default without ever writing a row. The resolver never reads another
  * tenant's row (cross-tenant isolation).
  *
+ * <p><strong>{@code team_id} (team_id retrofit).</strong> Unlike every other {@code pilotage.*}
+ * table, {@code team_id} here does <strong>not</strong> participate in the resolution/uniqueness
+ * key — {@code resolveProfile(tenant)} (the frozen contract consumed by E22/E03, substitutable by
+ * E40) stays tenant-scoped and its signature is unchanged. {@code team_id} carries the team on
+ * behalf of which the override was written (required by the {@code PUT
+ * /api/pilotage/organization-profile/{tenantId}} endpoint's request body) — attribution metadata,
+ * mutable via {@link #setTeamId(Long)}, not a lookup dimension. See the migration comment on
+ * {@code pilotage.organization_profile} for the full rationale.
+ *
  * <p>{@code default_modules} is stored as JSONB and mapped via {@link SqlTypes#JSON} — the entity
  * holds the raw JSON array string; {@link OrganizationProfileResolver} parses it into a
  * {@code Set<String>}. This entity is never exposed directly in the API (CLAUDE.md §Standards) —
@@ -44,6 +53,14 @@ public class OrganizationProfile {
     /** Tenant that owns this profile; unique (one profile per tenant), FK to public.tenants(id). */
     @Column(name = "tenant_id", nullable = false, unique = true)
     private Long tenantId;
+
+    /**
+     * Team the override was written on behalf of; FK to {@code public.teams(id)}. Attribution
+     * metadata, not part of the resolution key (see class Javadoc) — mutable, unlike
+     * {@code tenantId}.
+     */
+    @Column(name = "team_id", nullable = false)
+    private Long teamId;
 
     /** Overridden view altitude / render cursor. */
     @Enumerated(EnumType.STRING)
@@ -81,15 +98,17 @@ public class OrganizationProfile {
      * Full constructor for creating a tenant profile override.
      *
      * @param tenantId         owning tenant's {@code public.tenants.id}
+     * @param teamId           team the override is written on behalf of, {@code public.teams.id}
      * @param altitude         overridden view altitude
      * @param sovereigntyClass overridden sovereignty class
      * @param rigorLevel       overridden rigor level
      * @param defaultModules   overridden module ids as a JSON array string
      */
-    public OrganizationProfile(final Long tenantId, final Altitude altitude,
+    public OrganizationProfile(final Long tenantId, final Long teamId, final Altitude altitude,
             final SovereigntyClass sovereigntyClass, final RigorLevel rigorLevel,
             final String defaultModules) {
         this.tenantId = tenantId;
+        this.teamId = teamId;
         this.altitude = altitude;
         this.sovereigntyClass = sovereigntyClass;
         this.rigorLevel = rigorLevel;
@@ -130,6 +149,24 @@ public class OrganizationProfile {
      */
     public Long getTenantId() {
         return tenantId;
+    }
+
+    /**
+     * Returns the team the override was written on behalf of.
+     *
+     * @return the team's {@code public.teams.id}
+     */
+    public Long getTeamId() {
+        return teamId;
+    }
+
+    /**
+     * Sets the team the override was written on behalf of.
+     *
+     * @param teamId the team's {@code public.teams.id} to set
+     */
+    public void setTeamId(final Long teamId) {
+        this.teamId = teamId;
     }
 
     /**
