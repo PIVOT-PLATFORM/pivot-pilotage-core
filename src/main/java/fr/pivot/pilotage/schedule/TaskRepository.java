@@ -105,4 +105,30 @@ public interface TaskRepository extends JpaRepository<Task, Long> {
      * @return the number of initiatives currently on that lane
      */
     long countByLaneIdAndTenantIdAndTeamId(Long laneId, Long tenantId, Long teamId);
+
+    /**
+     * Finds all tasks of the given kind (e.g. strategic milestones, US22.3.4) belonging to the
+     * given project within the given tenant and team.
+     *
+     * @param projectId the parent {@code pilotage.project.id}
+     * @param tenantId  the {@code public.tenants.id} to restrict results to
+     * @param teamId    the {@code public.teams.id} to restrict results to
+     * @param nodeKind  the node kind to filter on
+     * @return the matching tasks (possibly empty)
+     */
+    List<Task> findAllByProjectIdAndTenantIdAndTeamIdAndNodeKind(Long projectId, Long tenantId, Long teamId,
+            NodeKind nodeKind);
+
+    /**
+     * Counts the tasks of the given kind (e.g. strategic milestones, US22.3.4) already created on
+     * the given project — used to append a newly created one at the end of its own display order.
+     *
+     * @param projectId the parent {@code pilotage.project.id}
+     * @param tenantId  the {@code public.tenants.id} to restrict results to
+     * @param teamId    the {@code public.teams.id} to restrict results to
+     * @param nodeKind  the node kind to filter on
+     * @return the number of matching tasks currently on that project
+     */
+    long countByProjectIdAndTenantIdAndTeamIdAndNodeKind(Long projectId, Long tenantId, Long teamId,
+            NodeKind nodeKind);
 }
