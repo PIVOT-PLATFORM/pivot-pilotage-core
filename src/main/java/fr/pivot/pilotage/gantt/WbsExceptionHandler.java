@@ -1,5 +1,6 @@
 package fr.pivot.pilotage.gantt;
 
+import java.util.Set;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
@@ -17,6 +18,15 @@ import tools.jackson.databind.exc.PropertyBindingException;
  */
 @RestControllerAdvice(basePackages = "fr.pivot.pilotage.gantt")
 class WbsExceptionHandler {
+
+    /**
+     * Engine-derived, read-only task fields (EN22.1): a request body carrying any of these is a
+     * client attempt to write a field owned by the scheduling engine, refused {@code 422} (US22.4.2
+     * error AC), distinct from a merely malformed body ({@code 400}).
+     */
+    private static final Set<String> DERIVED_FIELDS = Set.of(
+            "wbsCode", "earlyStart", "earlyFinish", "lateStart", "lateFinish",
+            "totalSlackMinutes", "freeSlackMinutes", "isCritical", "critical", "workMinutes");
 
     /**
      * Maps an unresolved project (unknown tenant/team/project, or cross-tenant/team) to a bodyless
@@ -144,21 +154,38 @@ class WbsExceptionHandler {
     }
 
     /**
-     * Maps an unreadable request body to the right status. A body carrying the derived
-     * {@code wbsCode} property (rejected because {@code fail-on-unknown-properties} is on) is a
-     * client attempt to write a server-derived field: that maps to {@code 422} (US22.4.1a error AC),
-     * distinct from a merely malformed body which stays a {@code 400}.
+     * Maps a rejected duration/effort value (US22.4.2 error AC) to {@code 422 Unprocessable Entity}
+     * with an explicit message; the task keeps its previous values (the service guards before any
+     * persistence).
+     *
+     * @param ex the thrown exception
+     * @return a 422 response carrying a {@link WbsApiError} body
+     */
+    @ExceptionHandler(InvalidTaskEffortException.class)
+    ResponseEntity<WbsApiError> handleInvalidEffort(final InvalidTaskEffortException ex) {
+        return ResponseEntity.unprocessableEntity()
+                .body(new WbsApiError(InvalidTaskEffortException.CODE, ex.getMessage()));
+    }
+
+    /**
+     * Maps an unreadable request body to the right status. A body carrying a server-derived property
+     * (the WBS code or any engine-computed field — rejected because {@code fail-on-unknown-properties}
+     * is on) is a client attempt to write a read-only field: that maps to {@code 422} (US22.4.1a /
+     * US22.4.2 error ACs), distinct from a merely malformed body which stays a {@code 400}.
      *
      * @param ex the thrown exception (Jackson binding failure wrapped by Spring)
-     * @return {@code 422} when the offending property is {@code wbsCode}, else {@code 400}
+     * @return {@code 422} when the offending property is a derived field, else {@code 400}
      */
     @ExceptionHandler(HttpMessageNotReadableException.class)
     ResponseEntity<WbsApiError> handleUnreadableBody(final HttpMessageNotReadableException ex) {
         if (ex.getCause() instanceof final PropertyBindingException binding
-                && "wbsCode".equals(binding.getPropertyName())) {
+                && DERIVED_FIELDS.contains(binding.getPropertyName())) {
+            final String message = "wbsCode".equals(binding.getPropertyName())
+                    ? DerivedFieldNotEditableException.clientSuppliedWbsCode().getMessage()
+                    : "Field '" + binding.getPropertyName() + "' is derived by the scheduling engine "
+                            + "(EN22.1) and is read-only; it must not be supplied by the client";
             return ResponseEntity.unprocessableEntity().body(new WbsApiError(
-                    DerivedFieldNotEditableException.CODE,
-                    DerivedFieldNotEditableException.clientSuppliedWbsCode().getMessage()));
+                    DerivedFieldNotEditableException.CODE, message));
         }
         return ResponseEntity.badRequest().body(new WbsApiError("MALFORMED_BODY", "Request body is not readable"));
     }
