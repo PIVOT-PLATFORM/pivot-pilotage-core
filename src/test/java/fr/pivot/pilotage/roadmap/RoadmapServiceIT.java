@@ -184,4 +184,115 @@ class RoadmapServiceIT {
                 roadmapService.createInitiative(otherTenant, otherTeam, otherProjectId,
                         new CreateInitiativeRequest("Smuggled", ownLane.id(), null, null, null)));
     }
+
+    // -------- milestones (US22.3.4) ----------------------------------------------------------------
+
+    // -------- AC: a milestone is visible on the roadmap (and, same row, would be to a future Gantt) --
+
+    @Test
+    void createMilestone_withoutLane_createsProjectWideMarkerVisibleInListing() {
+        final LocalDate date = LocalDate.of(2026, 6, 15);
+
+        final MilestoneResponse created = roadmapService.createMilestone(tenantId, teamId, projectId,
+                new CreateMilestoneRequest("Board review", date, null));
+
+        assertThat(created.laneId()).isNull();
+        assertThat(created.date()).isEqualTo(date);
+
+        final List<MilestoneResponse> listed = roadmapService.listMilestones(tenantId, teamId, projectId);
+        assertThat(listed).extracting(MilestoneResponse::id).containsExactly(created.id());
+    }
+
+    @Test
+    void createMilestone_pinnedToLane_isPersistedWithThatLane() {
+        final LaneResponse lane = roadmapService.createLane(tenantId, teamId, projectId, new CreateLaneRequest("Theme A"));
+
+        final MilestoneResponse created = roadmapService.createMilestone(tenantId, teamId, projectId,
+                new CreateMilestoneRequest("Beta launch", LocalDate.of(2026, 5, 1), lane.id()));
+
+        assertThat(created.laneId()).isEqualTo(lane.id());
+    }
+
+    // -------- AC: given a milestone, when its date changes, then the roadmap reflects the change ----
+
+    @Test
+    void updateMilestone_dateChange_isReflectedImmediatelyInListing() {
+        final MilestoneResponse created = roadmapService.createMilestone(tenantId, teamId, projectId,
+                new CreateMilestoneRequest("Launch", LocalDate.of(2026, 3, 1), null));
+
+        final LocalDate newDate = LocalDate.of(2026, 4, 15);
+        final MilestoneResponse moved = roadmapService.updateMilestone(tenantId, teamId, projectId, created.id(),
+                new UpdateMilestoneRequest(newDate, null));
+
+        assertThat(moved.date()).isEqualTo(newDate);
+        assertThat(moved.revision()).isEqualTo(created.revision() + 1);
+
+        final List<MilestoneResponse> listed = roadmapService.listMilestones(tenantId, teamId, projectId);
+        assertThat(listed).extracting(MilestoneResponse::date).containsExactly(newDate);
+    }
+
+    // -------- Error case: a milestone without a date is rejected -----------------------------------
+
+    @Test
+    void createMilestone_withoutDate_rejected() {
+        final InvalidMilestoneDateException ex = org.junit.jupiter.api.Assertions.assertThrows(
+                InvalidMilestoneDateException.class, () -> roadmapService.createMilestone(
+                        tenantId, teamId, projectId, new CreateMilestoneRequest("No date", null, null)));
+
+        assertThat(ex.code()).isEqualTo(InvalidMilestoneDateException.CODE_REQUIRED);
+    }
+
+    // -------- Error case: a milestone date outside the project's known footprint is rejected -------
+
+    @Test
+    void createMilestone_dateOutsideProjectFootprint_rejected() {
+        final LaneResponse lane = roadmapService.createLane(tenantId, teamId, projectId, new CreateLaneRequest("Theme A"));
+        roadmapService.createInitiative(tenantId, teamId, projectId, new CreateInitiativeRequest(
+                "Only initiative", lane.id(), LocalDate.of(2026, 1, 1), LocalDate.of(2026, 6, 30), null));
+
+        final InvalidMilestoneDateException ex = org.junit.jupiter.api.Assertions.assertThrows(
+                InvalidMilestoneDateException.class, () -> roadmapService.createMilestone(
+                        tenantId, teamId, projectId,
+                        new CreateMilestoneRequest("Too late", LocalDate.of(2027, 1, 1), null)));
+
+        assertThat(ex.code()).isEqualTo(InvalidMilestoneDateException.CODE_OUT_OF_BOUNDS);
+    }
+
+    @Test
+    void createMilestone_unknownLane_rejected() {
+        assertThatExceptionOfType(LaneNotFoundException.class).isThrownBy(() ->
+                roadmapService.createMilestone(tenantId, teamId, projectId,
+                        new CreateMilestoneRequest("No lane", LocalDate.of(2026, 1, 1), 999_999L)));
+    }
+
+    @Test
+    void updateMilestone_unknownMilestone_rejected() {
+        assertThatExceptionOfType(MilestoneNotFoundException.class).isThrownBy(() ->
+                roadmapService.updateMilestone(tenantId, teamId, projectId, 999_999L,
+                        new UpdateMilestoneRequest(LocalDate.of(2026, 1, 1), null)));
+    }
+
+    // -------- Security AC: cross-tenant/cross-team isolation on milestones (404-equivalent) --------
+
+    @Test
+    void crossTenant_milestoneListing_projectNotVisible_throwsProjectNotFound() throws Exception {
+        final long otherTenant = seedTenant();
+        final long otherTeam = seedTeam(otherTenant);
+
+        assertThatExceptionOfType(ProjectNotFoundException.class).isThrownBy(() ->
+                roadmapService.listMilestones(otherTenant, otherTeam, projectId));
+    }
+
+    @Test
+    void crossTenant_milestoneNotReachableForUpdateUnderForeignProject() throws Exception {
+        final MilestoneResponse created = roadmapService.createMilestone(tenantId, teamId, projectId,
+                new CreateMilestoneRequest("Launch", LocalDate.of(2026, 3, 1), null));
+        final long otherTenant = seedTenant();
+        final long otherTeam = seedTeam(otherTenant);
+        final long otherProjectId = newProject(otherTenant, otherTeam).getId();
+
+        assertThatExceptionOfType(MilestoneNotFoundException.class).isThrownBy(() ->
+                roadmapService.updateMilestone(otherTenant, otherTeam, otherProjectId, created.id(),
+                        new UpdateMilestoneRequest(LocalDate.of(2026, 4, 1), null)));
+    }
 }
