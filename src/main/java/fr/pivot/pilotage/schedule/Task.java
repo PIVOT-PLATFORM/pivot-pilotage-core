@@ -469,6 +469,80 @@ public class Task {
     }
 
     /**
+     * Sets the engine-derived WBS code. Invoked <strong>only</strong> by the scheduling engine
+     * service (EN22.1b) when persisting derived columns; client writes are refused (422) at the
+     * controller layer (out of EN22.1b scope).
+     *
+     * @param wbsCode the derived WBS code
+     */
+    public void setWbsCode(final String wbsCode) {
+        this.wbsCode = wbsCode;
+    }
+
+    /**
+     * Sets the engine-derived early start. Engine service only (EN22.1b).
+     *
+     * @param earlyStart the early start
+     */
+    public void setEarlyStart(final Instant earlyStart) {
+        this.earlyStart = earlyStart;
+    }
+
+    /**
+     * Sets the engine-derived early finish. Engine service only (EN22.1b).
+     *
+     * @param earlyFinish the early finish
+     */
+    public void setEarlyFinish(final Instant earlyFinish) {
+        this.earlyFinish = earlyFinish;
+    }
+
+    /**
+     * Sets the engine-derived late start. Engine service only (EN22.1b).
+     *
+     * @param lateStart the late start
+     */
+    public void setLateStart(final Instant lateStart) {
+        this.lateStart = lateStart;
+    }
+
+    /**
+     * Sets the engine-derived late finish. Engine service only (EN22.1b).
+     *
+     * @param lateFinish the late finish
+     */
+    public void setLateFinish(final Instant lateFinish) {
+        this.lateFinish = lateFinish;
+    }
+
+    /**
+     * Sets the engine-derived total slack in minutes. Engine service only (EN22.1b).
+     *
+     * @param totalSlackMinutes the total slack
+     */
+    public void setTotalSlackMinutes(final Integer totalSlackMinutes) {
+        this.totalSlackMinutes = totalSlackMinutes;
+    }
+
+    /**
+     * Sets the engine-derived free slack in minutes. Engine service only (EN22.1b).
+     *
+     * @param freeSlackMinutes the free slack
+     */
+    public void setFreeSlackMinutes(final Integer freeSlackMinutes) {
+        this.freeSlackMinutes = freeSlackMinutes;
+    }
+
+    /**
+     * Sets the engine-derived critical flag. Engine service only (EN22.1b).
+     *
+     * @param critical the critical flag
+     */
+    public void setCritical(final Boolean critical) {
+        this.critical = critical;
+    }
+
+    /**
      * Returns the engine-derived early finish (never computed in EN22.1a).
      *
      * @return the early finish, or {@code null}
