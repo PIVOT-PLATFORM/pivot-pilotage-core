@@ -22,6 +22,7 @@ import java.util.List;
 
 import static org.hamcrest.Matchers.containsString;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
@@ -138,7 +139,7 @@ class RoadmapControllerIT {
                         .content("{\"name\":\"Theme A\"}"))
                 .andExpect(status().isForbidden());
 
-        verify(roadmapService, never()).createLane(any(), any(), any(), any());
+        verify(roadmapService, never()).createLane(anyLong(), anyLong(), anyLong(), any());
     }
 
     @Test
@@ -150,7 +151,7 @@ class RoadmapControllerIT {
                         .content("{\"name\":\"\"}"))
                 .andExpect(status().isBadRequest());
 
-        verify(roadmapService, never()).createLane(any(), any(), any(), any());
+        verify(roadmapService, never()).createLane(anyLong(), anyLong(), anyLong(), any());
     }
 
     @Test
@@ -202,7 +203,7 @@ class RoadmapControllerIT {
                         .content("{\"name\":\"Launch v1\",\"laneId\":1}"))
                 .andExpect(status().isForbidden());
 
-        verify(roadmapService, never()).createInitiative(any(), any(), any(), any());
+        verify(roadmapService, never()).createInitiative(anyLong(), anyLong(), anyLong(), any());
     }
 
     // -------- Error case: an initiative without a target lane is rejected with a message ----------
@@ -278,7 +279,7 @@ class RoadmapControllerIT {
                         .content("{}"))
                 .andExpect(status().isForbidden());
 
-        verify(roadmapService, never()).updatePlacement(any(), any(), any(), any(), any());
+        verify(roadmapService, never()).updatePlacement(anyLong(), anyLong(), anyLong(), anyLong(), any());
     }
 
     @Test
