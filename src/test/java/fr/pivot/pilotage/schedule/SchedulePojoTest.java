@@ -20,17 +20,19 @@ import static org.assertj.core.api.Assertions.assertThat;
 class SchedulePojoTest {
 
     private static final Long TENANT_ID = 42L;
+    private static final Long TEAM_ID = 99L;
     private static final Long PROJECT_ID = 7L;
     private static final Instant NOW = Instant.parse("2026-07-11T10:15:30Z");
     private static final LocalDate DAY = LocalDate.of(2026, 7, 11);
 
     @Test
     void calendarConstructorGettersSettersAndCallbacks() {
-        final Calendar cal = new Calendar(TENANT_ID, PROJECT_ID, CalendarScope.PROJECT,
+        final Calendar cal = new Calendar(TENANT_ID, TEAM_ID, PROJECT_ID, CalendarScope.PROJECT,
                 "Standard", (short) 0b0011111, "{}");
 
         assertThat(cal.getId()).isNull();
         assertThat(cal.getTenantId()).isEqualTo(TENANT_ID);
+        assertThat(cal.getTeamId()).isEqualTo(TEAM_ID);
         assertThat(cal.getProjectId()).isEqualTo(PROJECT_ID);
         assertThat(cal.getScope()).isEqualTo(CalendarScope.PROJECT);
         assertThat(cal.getName()).isEqualTo("Standard");
@@ -66,10 +68,11 @@ class SchedulePojoTest {
 
     @Test
     void calendarExceptionConstructorGettersAndCallbacks() {
-        final CalendarException ex = new CalendarException(TENANT_ID, 3L, DAY, true, "{}");
+        final CalendarException ex = new CalendarException(TENANT_ID, TEAM_ID, 3L, DAY, true, "{}");
 
         assertThat(ex.getId()).isNull();
         assertThat(ex.getTenantId()).isEqualTo(TENANT_ID);
+        assertThat(ex.getTeamId()).isEqualTo(TEAM_ID);
         assertThat(ex.getCalendarId()).isEqualTo(3L);
         assertThat(ex.getExceptionDate()).isEqualTo(DAY);
         assertThat(ex.getWorking()).isTrue();
@@ -85,11 +88,12 @@ class SchedulePojoTest {
 
     @Test
     void taskConstructorAllAccessorsAndCallbacks() {
-        final Task task = new Task(TENANT_ID, PROJECT_ID, 1, "Design",
+        final Task task = new Task(TENANT_ID, TEAM_ID, PROJECT_ID, 1, "Design",
                 NodeKind.LEAF, Boolean.TRUE, TemporalPrecision.DAY, 0);
 
         assertThat(task.getId()).isNull();
         assertThat(task.getTenantId()).isEqualTo(TENANT_ID);
+        assertThat(task.getTeamId()).isEqualTo(TEAM_ID);
         assertThat(task.getProjectId()).isEqualTo(PROJECT_ID);
         assertThat(task.getPosition()).isEqualTo(1);
         assertThat(task.getName()).isEqualTo("Design");
@@ -180,10 +184,11 @@ class SchedulePojoTest {
 
     @Test
     void phaseConstructorGettersSettersAndCallbacks() {
-        final Phase phase = new Phase(TENANT_ID, PROJECT_ID, 5L, "Kickoff", 0);
+        final Phase phase = new Phase(TENANT_ID, TEAM_ID, PROJECT_ID, 5L, "Kickoff", 0);
 
         assertThat(phase.getId()).isNull();
         assertThat(phase.getTenantId()).isEqualTo(TENANT_ID);
+        assertThat(phase.getTeamId()).isEqualTo(TEAM_ID);
         assertThat(phase.getProjectId()).isEqualTo(PROJECT_ID);
         assertThat(phase.getParentTaskId()).isEqualTo(5L);
         assertThat(phase.getName()).isEqualTo("Kickoff");
@@ -204,10 +209,11 @@ class SchedulePojoTest {
 
     @Test
     void taskDependencyConstructorGettersSettersAndCallbacks() {
-        final TaskDependency dep = new TaskDependency(TENANT_ID, 1L, 2L, DependencyLinkType.FS, 0);
+        final TaskDependency dep = new TaskDependency(TENANT_ID, TEAM_ID, 1L, 2L, DependencyLinkType.FS, 0);
 
         assertThat(dep.getId()).isNull();
         assertThat(dep.getTenantId()).isEqualTo(TENANT_ID);
+        assertThat(dep.getTeamId()).isEqualTo(TEAM_ID);
         assertThat(dep.getPredecessorTaskId()).isEqualTo(1L);
         assertThat(dep.getSuccessorTaskId()).isEqualTo(2L);
         assertThat(dep.getLinkType()).isEqualTo(DependencyLinkType.FS);
@@ -226,10 +232,11 @@ class SchedulePojoTest {
 
     @Test
     void taskConstraintConstructorGettersSettersAndCallbacks() {
-        final TaskConstraint c = new TaskConstraint(TENANT_ID, 1L, ConstraintType.SNET, NOW, NOW.plusSeconds(60));
+        final TaskConstraint c = new TaskConstraint(TENANT_ID, TEAM_ID, 1L, ConstraintType.SNET, NOW, NOW.plusSeconds(60));
 
         assertThat(c.getId()).isNull();
         assertThat(c.getTenantId()).isEqualTo(TENANT_ID);
+        assertThat(c.getTeamId()).isEqualTo(TEAM_ID);
         assertThat(c.getTaskId()).isEqualTo(1L);
         assertThat(c.getConstraintType()).isEqualTo(ConstraintType.SNET);
         assertThat(c.getConstraintDate()).isEqualTo(NOW);
@@ -250,10 +257,11 @@ class SchedulePojoTest {
 
     @Test
     void assignmentConstructorAllAccessorsAndCallbacks() {
-        final Assignment a = new Assignment(TENANT_ID, 1L, "user:99", new BigDecimal("100.00"));
+        final Assignment a = new Assignment(TENANT_ID, TEAM_ID, 1L, "user:99", new BigDecimal("100.00"));
 
         assertThat(a.getId()).isNull();
         assertThat(a.getTenantId()).isEqualTo(TENANT_ID);
+        assertThat(a.getTeamId()).isEqualTo(TEAM_ID);
         assertThat(a.getTaskId()).isEqualTo(1L);
         assertThat(a.getResourceRef()).isEqualTo("user:99");
         assertThat(a.getUnitsPercent()).isEqualByComparingTo("100.00");
@@ -290,10 +298,11 @@ class SchedulePojoTest {
 
     @Test
     void taskProgressConstructorAllAccessorsAndCallbacks() {
-        final TaskProgress p = new TaskProgress(TENANT_ID, 1L, new BigDecimal("25.00"));
+        final TaskProgress p = new TaskProgress(TENANT_ID, TEAM_ID, 1L, new BigDecimal("25.00"));
 
         assertThat(p.getId()).isNull();
         assertThat(p.getTenantId()).isEqualTo(TENANT_ID);
+        assertThat(p.getTeamId()).isEqualTo(TEAM_ID);
         assertThat(p.getTaskId()).isEqualTo(1L);
         assertThat(p.getPercentComplete()).isEqualByComparingTo("25.00");
         assertThat(p.getPhysicalPercentComplete()).isNull();

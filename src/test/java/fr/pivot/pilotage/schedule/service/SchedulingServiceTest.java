@@ -51,6 +51,7 @@ import static org.mockito.Mockito.when;
 class SchedulingServiceTest {
 
     private static final long TENANT = 7L;
+    private static final long TEAM = 42L;
     private static final long PROJECT = 100L;
     private static final long CAL = 55L;
     private static final String WT = "{\"ranges\":[[\"09:00\",\"17:00\"]]}";
@@ -83,7 +84,7 @@ class SchedulingServiceTest {
     }
 
     private Project project(final Calendar cal, final SchedulingMode mode) {
-        final Project p = new Project(null, TENANT, "P", MON_0900);
+        final Project p = new Project(null, TENANT, TEAM, "P", MON_0900);
         setId(p, PROJECT);
         p.setCalendar(cal);
         p.setSchedulingMode(mode);
@@ -92,14 +93,14 @@ class SchedulingServiceTest {
     }
 
     private Calendar calendar() {
-        final Calendar c = new Calendar(TENANT, PROJECT, CalendarScope.PROJECT, "Std",
+        final Calendar c = new Calendar(TENANT, TEAM, PROJECT, CalendarScope.PROJECT, "Std",
                 (short) 0b0011111, WT);
         setId(c, CAL);
         return c;
     }
 
     private Task task(final long id, final int pos, final int duration, final NodeKind kind) {
-        final Task t = new Task(TENANT, PROJECT, pos, "T" + id, kind, false,
+        final Task t = new Task(TENANT, TEAM, PROJECT, pos, "T" + id, kind, false,
                 TemporalPrecision.DAY, 0);
         setId(t, id);
         t.setDurationMinutes(duration);
@@ -129,10 +130,10 @@ class SchedulingServiceTest {
         wireCommon(cal, List.of(a, b));
         // A → B start-to-start with a 60-min lag.
         when(dependencyRepository.findAllByPredecessorTaskIdAndTenantId(1L, TENANT))
-                .thenReturn(List.of(new TaskDependency(TENANT, 1L, 2L, DependencyLinkType.SS, 60)));
+                .thenReturn(List.of(new TaskDependency(TENANT, TEAM, 1L, 2L, DependencyLinkType.SS, 60)));
         // A carries an SNET constraint.
         when(constraintRepository.findByTaskIdAndTenantId(1L, TENANT)).thenReturn(Optional.of(
-                new TaskConstraint(TENANT, 1L, ConstraintType.SNET, MON_0900, null)));
+                new TaskConstraint(TENANT, TEAM, 1L, ConstraintType.SNET, MON_0900, null)));
 
         final ScheduleResult r = service.scheduleProject(PROJECT, TENANT);
         assertThat(r.task(1).earlyStart()).isEqualTo(MON_0900);
@@ -150,11 +151,11 @@ class SchedulingServiceTest {
         final Task b = task(2, 1, 480, NodeKind.LEAF);
         wireCommon(cal, List.of(a, b));
         when(dependencyRepository.findAllByPredecessorTaskIdAndTenantId(1L, TENANT))
-                .thenReturn(List.of(new TaskDependency(TENANT, 1L, 2L, DependencyLinkType.FF, 0)));
+                .thenReturn(List.of(new TaskDependency(TENANT, TEAM, 1L, 2L, DependencyLinkType.FF, 0)));
         // Tuesday is a holiday.
         when(calendarExceptionRepository.findAllByCalendarIdAndTenantId(CAL, TENANT))
                 .thenReturn(List.of(new CalendarException(
-                        TENANT, CAL, LocalDate.of(2024, 1, 2), false, null)));
+                        TENANT, TEAM, CAL, LocalDate.of(2024, 1, 2), false, null)));
 
         final ScheduleResult r = service.scheduleProject(PROJECT, TENANT);
         // Both finish on the same day (FF), skipping Tuesday.
@@ -247,7 +248,7 @@ class SchedulingServiceTest {
             final Instant date = ct == ConstraintType.ASAP || ct == ConstraintType.ALAP
                     ? null : MON_0900.plusSeconds(86400 * 2);
             when(constraintRepository.findByTaskIdAndTenantId(1L, TENANT)).thenReturn(Optional.of(
-                    new TaskConstraint(TENANT, 1L, ct, date, null)));
+                    new TaskConstraint(TENANT, TEAM, 1L, ct, date, null)));
             final ScheduleResult r = service.scheduleProject(PROJECT, TENANT);
             assertThat(r.task(1)).as("constraint %s", ct).isNotNull();
         }

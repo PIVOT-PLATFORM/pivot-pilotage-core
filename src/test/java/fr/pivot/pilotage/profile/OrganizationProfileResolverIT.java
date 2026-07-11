@@ -60,11 +60,13 @@ class OrganizationProfileResolverIT {
     private JdbcTemplate jdbcTemplate;
 
     private long tenantId;
+    private long teamId;
 
-    /** Seeds a fresh tenant in {@code public.tenants} before each test. */
+    /** Seeds a fresh tenant and team in {@code public.tenants}/{@code public.teams} before each test. */
     @BeforeEach
     void setUp() throws Exception {
         tenantId = seedTenant();
+        teamId = seedTeam(tenantId);
     }
 
     private long seedTenant() throws Exception {
@@ -72,14 +74,19 @@ class OrganizationProfileResolverIT {
                 POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword());
     }
 
-    // -------- AC: no override → versioned default (macro / neutral / standard / roadmap) --------
+    private long seedTeam(final long owner) throws Exception {
+        return PlatformSchemaTestSupport.seedTeam(
+                POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword(), owner);
+    }
+
+    // -------- AC: no override → versioned default (macro / zone B / standard / roadmap) ----------
 
     @Test
     void noOverride_returnsVersionedDefault() {
         final DefaultOrganizationProfile profile = resolver.resolveProfile(tenantId);
 
         assertThat(profile.altitude()).isEqualTo(Altitude.MACRO);
-        assertThat(profile.sovereigntyClass()).isEqualTo(SovereigntyClass.NEUTRAL);
+        assertThat(profile.sovereigntyClass()).isEqualTo(SovereigntyClass.ZONE_B_CONTROLEE);
         assertThat(profile.rigorLevel()).isEqualTo(RigorLevel.STANDARD);
         assertThat(profile.defaultModules()).containsExactly("roadmap");
         // No phantom row was written when falling back to the versioned default.
@@ -103,12 +110,12 @@ class OrganizationProfileResolverIT {
 
     @Test
     void override_isReadFromDatabase() {
-        profileRepository.save(new OrganizationProfile(tenantId, Altitude.DETAIL,
-                SovereigntyClass.SOVEREIGN, RigorLevel.STRICT, "[\"roadmap\",\"gantt\"]"));
+        profileRepository.save(new OrganizationProfile(tenantId, teamId, Altitude.DETAIL,
+                SovereigntyClass.ZONE_A_SOUVERAINE, RigorLevel.STRICT, "[\"roadmap\",\"gantt\"]"));
 
         final DefaultOrganizationProfile profile = resolver.resolveProfile(tenantId);
         assertThat(profile.altitude()).isEqualTo(Altitude.DETAIL);
-        assertThat(profile.sovereigntyClass()).isEqualTo(SovereigntyClass.SOVEREIGN);
+        assertThat(profile.sovereigntyClass()).isEqualTo(SovereigntyClass.ZONE_A_SOUVERAINE);
         assertThat(profile.rigorLevel()).isEqualTo(RigorLevel.STRICT);
         assertThat(profile.defaultModules()).containsExactlyInAnyOrder("roadmap", "gantt");
     }
@@ -117,11 +124,11 @@ class OrganizationProfileResolverIT {
 
     @Test
     void oneProfilePerTenant_secondInsertViolatesUnique() {
-        profileRepository.saveAndFlush(new OrganizationProfile(tenantId, Altitude.MACRO,
-                SovereigntyClass.NEUTRAL, RigorLevel.STANDARD, "[\"roadmap\"]"));
+        profileRepository.saveAndFlush(new OrganizationProfile(tenantId, teamId, Altitude.MACRO,
+                SovereigntyClass.ZONE_B_CONTROLEE, RigorLevel.STANDARD, "[\"roadmap\"]"));
 
-        assertThatThrownBy(() -> profileRepository.saveAndFlush(new OrganizationProfile(tenantId,
-                Altitude.DETAIL, SovereigntyClass.RESTRICTED, RigorLevel.LIGHT, "[\"gantt\"]")))
+        assertThatThrownBy(() -> profileRepository.saveAndFlush(new OrganizationProfile(tenantId, teamId,
+                Altitude.DETAIL, SovereigntyClass.ZONE_C_DMZ_EXTERNE, RigorLevel.LIGHT, "[\"gantt\"]")))
                 .isInstanceOf(DataIntegrityViolationException.class);
     }
 
@@ -141,14 +148,15 @@ class OrganizationProfileResolverIT {
     @Test
     void isolation_neverReadsAnotherTenantsOverride() throws Exception {
         final long tenantT2 = seedTenant();
+        final long teamT2 = seedTeam(tenantT2);
         // Only T2 has an override.
-        profileRepository.save(new OrganizationProfile(tenantT2, Altitude.DETAIL,
-                SovereigntyClass.SOVEREIGN, RigorLevel.STRICT, "[\"gantt\"]"));
+        profileRepository.save(new OrganizationProfile(tenantT2, teamT2, Altitude.DETAIL,
+                SovereigntyClass.ZONE_A_SOUVERAINE, RigorLevel.STRICT, "[\"gantt\"]"));
 
         // T1 (no override) resolves the versioned default, never T2's override.
         final DefaultOrganizationProfile t1 = resolver.resolveProfile(tenantId);
         assertThat(t1.altitude()).isEqualTo(Altitude.MACRO);
-        assertThat(t1.sovereigntyClass()).isEqualTo(SovereigntyClass.NEUTRAL);
+        assertThat(t1.sovereigntyClass()).isEqualTo(SovereigntyClass.ZONE_B_CONTROLEE);
         assertThat(t1.defaultModules()).containsExactly("roadmap");
 
         // T2 resolves its own override.
@@ -162,9 +170,9 @@ class OrganizationProfileResolverIT {
     @Test
     void malformedModulesJson_surfacesAsError() {
         jdbcTemplate.update("INSERT INTO pilotage.organization_profile "
-                + "(tenant_id, altitude, sovereignty_class, rigor_level, default_modules) "
-                + "VALUES (?, 'MACRO', 'NEUTRAL', 'STANDARD', ?::jsonb)",
-                tenantId, "{\"not\":\"an-array\"}");
+                + "(tenant_id, team_id, altitude, sovereignty_class, rigor_level, default_modules) "
+                + "VALUES (?, ?, 'MACRO', 'ZONE_B_CONTROLEE', 'STANDARD', ?::jsonb)",
+                tenantId, teamId, "{\"not\":\"an-array\"}");
 
         assertThatThrownBy(() -> resolver.resolveProfile(tenantId))
                 .isInstanceOf(RuntimeException.class);

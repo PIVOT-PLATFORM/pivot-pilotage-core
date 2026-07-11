@@ -44,6 +44,7 @@ import static org.mockito.Mockito.when;
 class PlanProjectionServiceTest {
 
     private static final long TENANT = 7L;
+    private static final long TEAM = 42L;
     private static final long PROJECT = 100L;
     private static final Instant MON_0900 =
             LocalDate.of(2024, 1, 1).atStartOfDay(ZoneOffset.UTC).plusHours(9).toInstant();
@@ -77,13 +78,13 @@ class PlanProjectionServiceTest {
     }
 
     private Project project() {
-        final Project p = new Project(null, TENANT, "P", MON_0900);
+        final Project p = new Project(null, TENANT, TEAM, "P", MON_0900);
         setId(p, PROJECT);
         return p;
     }
 
     private Task task(final long id, final int pos, final NodeKind kind, final boolean shared) {
-        final Task t = new Task(TENANT, PROJECT, pos, "T" + id, kind, shared,
+        final Task t = new Task(TENANT, TEAM, PROJECT, pos, "T" + id, kind, shared,
                 TemporalPrecision.DAY, 3);
         setId(t, id);
         return t;
@@ -253,7 +254,7 @@ class PlanProjectionServiceTest {
                 .thenReturn(List.of());
         lenient().when(progressRepository.findByTaskIdAndTenantId(anyLong(), anyLong()))
                 .thenReturn(Optional.empty());
-        final TaskDependency dep = new TaskDependency(TENANT, 1L, 2L, DependencyLinkType.FS, 30);
+        final TaskDependency dep = new TaskDependency(TENANT, TEAM, 1L, 2L, DependencyLinkType.FS, 30);
         setId(dep, 9L);
         when(dependencyRepository.findAllByPredecessorTaskIdAndTenantId(1L, TENANT))
                 .thenReturn(List.of(dep));
@@ -283,13 +284,13 @@ class PlanProjectionServiceTest {
     }
 
     private Assignment assignment(final long taskId, final int workMinutes, final String cost) {
-        final Assignment a = new Assignment(TENANT, taskId, "r", new BigDecimal("100.00"));
+        final Assignment a = new Assignment(TENANT, TEAM, taskId, "r", new BigDecimal("100.00"));
         a.setWorkMinutes(workMinutes);
         a.setCostAmount(new BigDecimal(cost));
         return a;
     }
 
     private TaskProgress progress(final long taskId, final String pct) {
-        return new TaskProgress(TENANT, taskId, new BigDecimal(pct));
+        return new TaskProgress(TENANT, TEAM, taskId, new BigDecimal(pct));
     }
 }

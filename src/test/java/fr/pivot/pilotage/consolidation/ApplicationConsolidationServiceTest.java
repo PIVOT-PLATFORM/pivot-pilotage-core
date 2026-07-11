@@ -42,6 +42,7 @@ import static org.mockito.Mockito.when;
 class ApplicationConsolidationServiceTest {
 
     private static final long TENANT = 7L;
+    private static final long TEAM = 5L;
     private static final long APP = 42L;
     private static final Instant ANCHOR = LocalDate.of(2024, 1, 1).atStartOfDay(ZoneOffset.UTC).toInstant();
     private static final Instant MON_0900 =
@@ -64,27 +65,27 @@ class ApplicationConsolidationServiceTest {
     }
 
     private Application application() {
-        final Application app = new Application(TENANT, "Billing", ANCHOR);
+        final Application app = new Application(TENANT, TEAM, "Billing", ANCHOR);
         setId(app, APP);
         return app;
     }
 
     private Project project(final long id) {
         final Application app = application();
-        final Project p = new Project(app, TENANT, "v" + id, ANCHOR);
+        final Project p = new Project(app, TENANT, TEAM, "v" + id, ANCHOR);
         setId(p, id);
         return p;
     }
 
     private Task leaf(final long id, final Instant start) {
-        final Task t = new Task(TENANT, 0L, 0, "leaf", NodeKind.LEAF, false, TemporalPrecision.DAY, 0);
+        final Task t = new Task(TENANT, TEAM, 0L, 0, "leaf", NodeKind.LEAF, false, TemporalPrecision.DAY, 0);
         setId(t, id);
         t.setStartDate(start);
         return t;
     }
 
     private Task sharedMilestone(final long id, final LocalDate fuzzyStart, final LocalDate fuzzyEnd) {
-        final Task t = new Task(TENANT, 0L, 0, "Go-live", NodeKind.MILESTONE, true, TemporalPrecision.DAY, 0);
+        final Task t = new Task(TENANT, TEAM, 0L, 0, "Go-live", NodeKind.MILESTONE, true, TemporalPrecision.DAY, 0);
         setId(t, id);
         t.setFuzzyPeriodStart(fuzzyStart);
         t.setFuzzyPeriodEnd(fuzzyEnd);
@@ -116,7 +117,7 @@ class ApplicationConsolidationServiceTest {
                 sharedMilestone(2L, LocalDate.of(2024, 1, 15), LocalDate.of(2024, 3, 31))));
         // p2: a task without any precise window → PLANNED, plus its own shared milestone
         when(taskRepository.findAllByProjectIdAndTenantId(200L, TENANT)).thenReturn(List.of(
-                new Task(TENANT, 0L, 0, "planned", NodeKind.LEAF, false, TemporalPrecision.DAY, 0),
+                new Task(TENANT, TEAM, 0L, 0, "planned", NodeKind.LEAF, false, TemporalPrecision.DAY, 0),
                 sharedMilestone(3L, LocalDate.of(2024, 4, 1), LocalDate.of(2024, 4, 30))));
         // p3: no task at all → EMPTY
         when(taskRepository.findAllByProjectIdAndTenantId(300L, TENANT)).thenReturn(List.of());

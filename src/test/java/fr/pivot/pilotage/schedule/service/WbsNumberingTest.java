@@ -17,7 +17,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 class WbsNumberingTest {
 
     private static Task task(final long id, final Long parentId, final int position) {
-        final Task t = new Task(7L, 100L, position, "T" + id, NodeKind.LEAF, false,
+        final Task t = new Task(7L, 42L, 100L, position, "T" + id, NodeKind.LEAF, false,
                 TemporalPrecision.DAY, 0);
         setId(t, id);
         t.setParentTaskId(parentId);

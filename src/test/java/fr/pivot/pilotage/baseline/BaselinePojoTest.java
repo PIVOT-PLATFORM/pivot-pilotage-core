@@ -25,16 +25,18 @@ import static org.assertj.core.api.Assertions.assertThat;
 class BaselinePojoTest {
 
     private static final Long TENANT_ID = 42L;
+    private static final Long TEAM_ID = 99L;
     private static final Long PROJECT_ID = 7L;
     private static final Instant NOW = Instant.parse("2026-07-11T10:15:30Z");
     private static final LocalDate DAY = LocalDate.of(2026, 7, 11);
 
     @Test
     void baselineConstructorGettersAndCallbacks() {
-        final Baseline b = new Baseline(TENANT_ID, PROJECT_ID, (short) 0, NOW);
+        final Baseline b = new Baseline(TENANT_ID, TEAM_ID, PROJECT_ID, (short) 0, NOW);
 
         assertThat(b.getId()).isNull();
         assertThat(b.getTenantId()).isEqualTo(TENANT_ID);
+        assertThat(b.getTeamId()).isEqualTo(TEAM_ID);
         assertThat(b.getProjectId()).isEqualTo(PROJECT_ID);
         assertThat(b.getBaselineIndex()).isEqualTo((short) 0);
         assertThat(b.getCapturedAt()).isEqualTo(NOW);
@@ -53,10 +55,11 @@ class BaselinePojoTest {
 
     @Test
     void baselineSnapshotConstructorAllAccessorsAndCallbacks() {
-        final BaselineSnapshot s = new BaselineSnapshot(TENANT_ID, 3L, 5L);
+        final BaselineSnapshot s = new BaselineSnapshot(TENANT_ID, TEAM_ID, 3L, 5L);
 
         assertThat(s.getId()).isNull();
         assertThat(s.getTenantId()).isEqualTo(TENANT_ID);
+        assertThat(s.getTeamId()).isEqualTo(TEAM_ID);
         assertThat(s.getBaselineId()).isEqualTo(3L);
         assertThat(s.getTaskId()).isEqualTo(5L);
         assertThat(s.getBlStart()).isNull();
@@ -88,8 +91,8 @@ class BaselinePojoTest {
 
     @Test
     void projectTemporalAccessorsRoundTrip() {
-        final Application app = new Application(TENANT_ID, "App", NOW);
-        final Project project = new Project(app, TENANT_ID, "Project", NOW);
+        final Application app = new Application(TENANT_ID, TEAM_ID, "App", NOW);
+        final Project project = new Project(app, TENANT_ID, TEAM_ID, "Project", NOW);
 
         // schedulingMode defaults to AUTO; the other temporal fields default to null
         assertThat(project.getSchedulingMode()).isEqualTo(SchedulingMode.AUTO);
@@ -97,7 +100,7 @@ class BaselinePojoTest {
         assertThat(project.getStatusDate()).isNull();
         assertThat(project.getDefaultTemporalPrecision()).isNull();
 
-        final Calendar calendar = new Calendar(TENANT_ID, PROJECT_ID, CalendarScope.PROJECT,
+        final Calendar calendar = new Calendar(TENANT_ID, TEAM_ID, PROJECT_ID, CalendarScope.PROJECT,
                 "Standard", (short) 0b0011111, "{}");
         project.setCalendar(calendar);
         project.setSchedulingMode(SchedulingMode.MANUAL);

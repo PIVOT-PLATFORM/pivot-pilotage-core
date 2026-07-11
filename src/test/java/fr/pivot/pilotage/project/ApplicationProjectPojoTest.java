@@ -20,14 +20,16 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class ApplicationProjectPojoTest {
 
     private static final Long TENANT_ID = 42L;
+    private static final Long TEAM_ID = 99L;
     private static final Instant NOW = Instant.parse("2020-01-01T00:00:00Z");
 
     @Test
     void applicationFullConstructorInitializesAllFields() {
-        final Application app = new Application(TENANT_ID, "Roadmap App", NOW);
+        final Application app = new Application(TENANT_ID, TEAM_ID, "Roadmap App", NOW);
 
         assertThat(app.getId()).isNull();
         assertThat(app.getTenantId()).isEqualTo(TENANT_ID);
+        assertThat(app.getTeamId()).isEqualTo(TEAM_ID);
         assertThat(app.getName()).isEqualTo("Roadmap App");
         assertThat(app.getCreatedAt()).isEqualTo(NOW);
         assertThat(app.getUpdatedAt()).isEqualTo(NOW);
@@ -36,7 +38,7 @@ class ApplicationProjectPojoTest {
 
     @Test
     void applicationSetterUpdatesName() {
-        final Application app = new Application(TENANT_ID, "Old", NOW);
+        final Application app = new Application(TENANT_ID, TEAM_ID, "Old", NOW);
 
         app.setName("New name");
 
@@ -55,7 +57,7 @@ class ApplicationProjectPojoTest {
 
     @Test
     void applicationPrePersistPreservesAlreadySetTimestamps() {
-        final Application app = new Application(TENANT_ID, "Kept", NOW);
+        final Application app = new Application(TENANT_ID, TEAM_ID, "Kept", NOW);
 
         app.prePersist();
 
@@ -65,7 +67,7 @@ class ApplicationProjectPojoTest {
 
     @Test
     void applicationPreUpdateRefreshesUpdatedAt() {
-        final Application app = new Application(TENANT_ID, "App", NOW);
+        final Application app = new Application(TENANT_ID, TEAM_ID, "App", NOW);
 
         app.preUpdate();
 
@@ -75,8 +77,8 @@ class ApplicationProjectPojoTest {
 
     @Test
     void applicationAddProjectWiresBothSidesAndExposesUnmodifiableView() {
-        final Application app = new Application(TENANT_ID, "App", NOW);
-        final Project project = new Project(null, TENANT_ID, "Project A", NOW);
+        final Application app = new Application(TENANT_ID, TEAM_ID, "App", NOW);
+        final Project project = new Project(null, TENANT_ID, TEAM_ID, "Project A", NOW);
 
         app.addProject(project);
 
@@ -84,19 +86,20 @@ class ApplicationProjectPojoTest {
         assertThat(project.getApplication()).isSameAs(app);
 
         final List<Project> view = app.getProjects();
-        final Project other = new Project(null, TENANT_ID, "Project B", NOW);
+        final Project other = new Project(null, TENANT_ID, TEAM_ID, "Project B", NOW);
         assertThatThrownBy(() -> view.add(other))
                 .isInstanceOf(UnsupportedOperationException.class);
     }
 
     @Test
     void projectFullConstructorInitializesAllFields() {
-        final Application app = new Application(TENANT_ID, "Owner", NOW);
-        final Project project = new Project(app, TENANT_ID, "Project A", NOW);
+        final Application app = new Application(TENANT_ID, TEAM_ID, "Owner", NOW);
+        final Project project = new Project(app, TENANT_ID, TEAM_ID, "Project A", NOW);
 
         assertThat(project.getId()).isNull();
         assertThat(project.getApplication()).isSameAs(app);
         assertThat(project.getTenantId()).isEqualTo(TENANT_ID);
+        assertThat(project.getTeamId()).isEqualTo(TEAM_ID);
         assertThat(project.getName()).isEqualTo("Project A");
         assertThat(project.getCreatedAt()).isEqualTo(NOW);
         assertThat(project.getUpdatedAt()).isEqualTo(NOW);
@@ -104,8 +107,8 @@ class ApplicationProjectPojoTest {
 
     @Test
     void projectSettersUpdateApplicationAndName() {
-        final Project project = new Project(null, TENANT_ID, "Old", NOW);
-        final Application app = new Application(TENANT_ID, "Owner", NOW);
+        final Project project = new Project(null, TENANT_ID, TEAM_ID, "Old", NOW);
+        final Application app = new Application(TENANT_ID, TEAM_ID, "Owner", NOW);
 
         project.setApplication(app);
         project.setName("New name");
@@ -126,7 +129,7 @@ class ApplicationProjectPojoTest {
 
     @Test
     void projectPrePersistPreservesAlreadySetTimestamps() {
-        final Project project = new Project(null, TENANT_ID, "Kept", NOW);
+        final Project project = new Project(null, TENANT_ID, TEAM_ID, "Kept", NOW);
 
         project.prePersist();
 
@@ -136,7 +139,7 @@ class ApplicationProjectPojoTest {
 
     @Test
     void projectPreUpdateRefreshesUpdatedAt() {
-        final Project project = new Project(null, TENANT_ID, "Project", NOW);
+        final Project project = new Project(null, TENANT_ID, TEAM_ID, "Project", NOW);
 
         project.preUpdate();
 

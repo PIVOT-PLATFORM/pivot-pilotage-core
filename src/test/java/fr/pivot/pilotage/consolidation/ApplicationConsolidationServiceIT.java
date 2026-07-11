@@ -84,15 +84,17 @@ class ApplicationConsolidationServiceIT {
     @Autowired private ProjectApplicationResolver resolver;
 
     private long tenantId;
+    private long teamId;
 
     private static final Instant ANCHOR = LocalDate.of(2024, 1, 1).atStartOfDay(ZoneOffset.UTC).toInstant();
     private static final Instant MON_0900 =
             LocalDate.of(2024, 2, 5).atStartOfDay(ZoneOffset.UTC).plusHours(9).toInstant();
 
-    /** Seeds a fresh tenant before each test. */
+    /** Seeds a fresh tenant and team before each test. */
     @BeforeEach
     void setUp() throws Exception {
         tenantId = seedTenant();
+        teamId = seedTeam(tenantId);
     }
 
     private long seedTenant() throws Exception {
@@ -100,24 +102,29 @@ class ApplicationConsolidationServiceIT {
                 POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword());
     }
 
-    private Application newApplication(final long owner, final String name) {
-        return applicationRepository.save(new Application(owner, name, ANCHOR));
+    private long seedTeam(final long owner) throws Exception {
+        return PlatformSchemaTestSupport.seedTeam(
+                POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword(), owner);
     }
 
-    private Project newProject(final long owner, final Application app, final String name) {
-        return projectRepository.save(new Project(app, owner, name, ANCHOR));
+    private Application newApplication(final long owner, final long team, final String name) {
+        return applicationRepository.save(new Application(owner, team, name, ANCHOR));
     }
 
-    private Task leaf(final long owner, final long projectId, final Instant start) {
-        final Task t = new Task(owner, projectId, 0, "leaf", NodeKind.LEAF, false,
+    private Project newProject(final long owner, final long team, final Application app, final String name) {
+        return projectRepository.save(new Project(app, owner, team, name, ANCHOR));
+    }
+
+    private Task leaf(final long owner, final long team, final long projectId, final Instant start) {
+        final Task t = new Task(owner, team, projectId, 0, "leaf", NodeKind.LEAF, false,
                 TemporalPrecision.DAY, 0);
         t.setStartDate(start);
         return taskRepository.save(t);
     }
 
-    private Task sharedMilestone(final long owner, final long projectId, final String name,
+    private Task sharedMilestone(final long owner, final long team, final long projectId, final String name,
             final LocalDate fuzzyStart, final LocalDate fuzzyEnd) {
-        final Task t = new Task(owner, projectId, 0, name, NodeKind.MILESTONE, true,
+        final Task t = new Task(owner, team, projectId, 0, name, NodeKind.MILESTONE, true,
                 TemporalPrecision.DAY, 0);
         t.setFuzzyPeriodStart(fuzzyStart);
         t.setFuzzyPeriodEnd(fuzzyEnd);
@@ -128,18 +135,18 @@ class ApplicationConsolidationServiceIT {
 
     @Test
     void consolidate_nProjects_aggregatesCountWindowStatusAndUnifiedMilestones() {
-        final Application app = newApplication(tenantId, "Billing");
-        final Project v1 = newProject(tenantId, app, "v1");
-        final Project v2 = newProject(tenantId, app, "v2");
-        final Project v3 = newProject(tenantId, app, "v3");
+        final Application app = newApplication(tenantId, teamId, "Billing");
+        final Project v1 = newProject(tenantId, teamId, app, "v1");
+        final Project v2 = newProject(tenantId, teamId, app, "v2");
+        final Project v3 = newProject(tenantId, teamId, app, "v3");
 
-        leaf(tenantId, v1.getId(), MON_0900);
-        final Task m1 = sharedMilestone(tenantId, v1.getId(), "Go-live v1",
+        leaf(tenantId, teamId, v1.getId(), MON_0900);
+        final Task m1 = sharedMilestone(tenantId, teamId, v1.getId(), "Go-live v1",
                 LocalDate.of(2024, 1, 15), LocalDate.of(2024, 3, 31));
-        final Task m2 = sharedMilestone(tenantId, v2.getId(), "Go-live v2",
+        final Task m2 = sharedMilestone(tenantId, teamId, v2.getId(), "Go-live v2",
                 LocalDate.of(2024, 4, 1), LocalDate.of(2024, 4, 30));
         // v2 also has a non-shared leaf without precise dates → v2 is PLANNED overall
-        taskRepository.save(new Task(tenantId, v2.getId(), 1, "wip", NodeKind.LEAF, false,
+        taskRepository.save(new Task(tenantId, teamId, v2.getId(), 1, "wip", NodeKind.LEAF, false,
                 TemporalPrecision.DAY, 0));
         // v3: no task → EMPTY
 
@@ -164,7 +171,7 @@ class ApplicationConsolidationServiceIT {
 
     @Test
     void consolidate_crossModuleContributor_surfacesAggregate() {
-        final Application app = newApplication(tenantId, "Billing");
+        final Application app = newApplication(tenantId, teamId, "Billing");
 
         final ApplicationConsolidation c = consolidationService.consolidate(tenantId, app.getId());
 
@@ -180,8 +187,8 @@ class ApplicationConsolidationServiceIT {
 
     @Test
     void resolver_projectTracesToExactlyOneApplication() {
-        final Application app = newApplication(tenantId, "Billing");
-        final Project v1 = newProject(tenantId, app, "v1");
+        final Application app = newApplication(tenantId, teamId, "Billing");
+        final Project v1 = newProject(tenantId, teamId, app, "v1");
 
         assertThat(resolver.resolveApplicationId(tenantId, v1.getId())).isEqualTo(app.getId());
     }
@@ -191,8 +198,8 @@ class ApplicationConsolidationServiceIT {
     @Test
     void consolidate_foreignTenantApplication_notAccessible() throws Exception {
         final long tenantT2 = seedTenant();
-        final Application appT1 = newApplication(tenantId, "Billing");
-        newProject(tenantId, appT1, "v1");
+        final Application appT1 = newApplication(tenantId, teamId, "Billing");
+        newProject(tenantId, teamId, appT1, "v1");
 
         assertThatThrownBy(() -> consolidationService.consolidate(tenantT2, appT1.getId()))
                 .isInstanceOf(ApplicationNotFoundException.class);
@@ -203,8 +210,8 @@ class ApplicationConsolidationServiceIT {
     @Test
     void resolver_foreignTenantProject_notAccessible() throws Exception {
         final long tenantT2 = seedTenant();
-        final Application appT1 = newApplication(tenantId, "Billing");
-        final Project v1 = newProject(tenantId, appT1, "v1");
+        final Application appT1 = newApplication(tenantId, teamId, "Billing");
+        final Project v1 = newProject(tenantId, teamId, appT1, "v1");
 
         assertThatThrownBy(() -> resolver.resolveApplicationId(tenantT2, v1.getId()))
                 .isInstanceOf(ProjectNotFoundException.class);

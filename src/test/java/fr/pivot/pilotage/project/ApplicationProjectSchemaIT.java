@@ -64,12 +64,15 @@ class ApplicationProjectSchemaIT {
     private JdbcTemplate jdbcTemplate;
 
     private long tenantId;
+    private long teamId;
 
-    /** Seeds a fresh tenant in {@code public.tenants} before each test. */
+    /** Seeds a fresh tenant and team in {@code public.tenants}/{@code public.teams} before each test. */
     @BeforeEach
     void setUp() throws Exception {
         tenantId = PlatformSchemaTestSupport.seedTenant(
                 POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword());
+        teamId = PlatformSchemaTestSupport.seedTeam(
+                POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword(), tenantId);
     }
 
     /**
@@ -122,6 +125,33 @@ class ApplicationProjectSchemaIT {
     }
 
     /**
+     * AC (team_id retrofit): {@code pilotage.application.team_id} is {@code NOT NULL} and carries
+     * a foreign key to {@code public.teams(id)} — mirrors {@link #ac_applicationPorteTenantIdNotNullFk()}.
+     */
+    @Test
+    void ac_applicationPorteTeamIdNotNullFk() {
+        final String nullable = jdbcTemplate.queryForObject(
+                "SELECT is_nullable FROM information_schema.columns "
+                        + "WHERE table_schema = 'pilotage' AND table_name = 'application' "
+                        + "AND column_name = 'team_id'",
+                String.class);
+        assertThat(nullable).isEqualTo("NO");
+
+        final Integer fkCount = jdbcTemplate.queryForObject("""
+                SELECT COUNT(*)
+                FROM pg_constraint c
+                JOIN pg_attribute a
+                  ON a.attrelid = c.conrelid AND a.attnum = ANY (c.conkey)
+                WHERE c.contype = 'f'
+                  AND c.conrelid = 'pilotage.application'::regclass
+                  AND c.confrelid = 'public.teams'::regclass
+                  AND a.attname = 'team_id'
+                  AND array_length(c.conkey, 1) = 1
+                """, Integer.class);
+        assertThat(fkCount).isEqualTo(1);
+    }
+
+    /**
      * AC: a project created against an application persists, inherits the application's tenant,
      * and is readable back through the repository.
      */
@@ -130,10 +160,10 @@ class ApplicationProjectSchemaIT {
     void ac_projetRattacheApplicationMemeTenant() {
         final Instant now = Instant.now();
         final Application application = applicationRepository.save(
-                new Application(tenantId, "App", now));
+                new Application(tenantId, teamId, "App", now));
 
         final Project project = projectRepository.save(
-                new Project(application, application.getTenantId(), "Project", now));
+                new Project(application, application.getTenantId(), application.getTeamId(), "Project", now));
 
         assertThat(project.getId()).isNotNull();
         assertThat(project.getTenantId()).isEqualTo(tenantId);
@@ -151,9 +181,9 @@ class ApplicationProjectSchemaIT {
     @Transactional
     void ac_relationBidirectionnelle() {
         final Instant now = Instant.now();
-        final Application application = new Application(tenantId, "App", now);
-        application.addProject(new Project(application, tenantId, "P1", now));
-        application.addProject(new Project(application, tenantId, "P2", now));
+        final Application application = new Application(tenantId, teamId, "App", now);
+        application.addProject(new Project(application, tenantId, teamId, "P1", now));
+        application.addProject(new Project(application, tenantId, teamId, "P2", now));
 
         final Application saved = applicationRepository.save(application);
         applicationRepository.flush();
@@ -178,11 +208,13 @@ class ApplicationProjectSchemaIT {
                 String.class);
         assertThat(nullable).isEqualTo("NO");
 
+        // team_id is bound to the (valid, seeded) teamId so the failure is isolated to the
+        // application_id under test, not a spurious NOT NULL violation on team_id.
         assertThatThrownBy(() ->
                 jdbcTemplate.update(
-                        "INSERT INTO pilotage.project (application_id, tenant_id, name) "
-                                + "VALUES (NULL, ?, 'Orphan')",
-                        tenantId))
+                        "INSERT INTO pilotage.project (application_id, tenant_id, team_id, name) "
+                                + "VALUES (NULL, ?, ?, 'Orphan')",
+                        tenantId, teamId))
                 .isInstanceOf(DataIntegrityViolationException.class);
     }
 
@@ -196,9 +228,9 @@ class ApplicationProjectSchemaIT {
 
         assertThatThrownBy(() ->
                 jdbcTemplate.update(
-                        "INSERT INTO pilotage.project (application_id, tenant_id, name) "
-                                + "VALUES (?, ?, 'Ghost')",
-                        missingApplicationId, tenantId))
+                        "INSERT INTO pilotage.project (application_id, tenant_id, team_id, name) "
+                                + "VALUES (?, ?, ?, 'Ghost')",
+                        missingApplicationId, tenantId, teamId))
                 .isInstanceOf(DataIntegrityViolationException.class);
 
         final Integer rows = jdbcTemplate.queryForObject(
@@ -217,13 +249,15 @@ class ApplicationProjectSchemaIT {
     void ac_securite_isolationMultiTenant() throws Exception {
         final long tenantT2 = PlatformSchemaTestSupport.seedTenant(
                 POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword());
+        final long teamT2 = PlatformSchemaTestSupport.seedTeam(
+                POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword(), tenantT2);
         final Instant now = Instant.now();
 
-        final Application appT1 = applicationRepository.save(new Application(tenantId, "AppT1", now));
-        projectRepository.save(new Project(appT1, tenantId, "ProjT1", now));
+        final Application appT1 = applicationRepository.save(new Application(tenantId, teamId, "AppT1", now));
+        projectRepository.save(new Project(appT1, tenantId, teamId, "ProjT1", now));
 
-        final Application appT2 = applicationRepository.save(new Application(tenantT2, "AppT2", now));
-        projectRepository.save(new Project(appT2, tenantT2, "ProjT2", now));
+        final Application appT2 = applicationRepository.save(new Application(tenantT2, teamT2, "AppT2", now));
+        projectRepository.save(new Project(appT2, tenantT2, teamT2, "ProjT2", now));
 
         // In tenant T1's scope, no T2 data is visible.
         assertThat(applicationRepository.findAllByTenantId(tenantId))
@@ -240,8 +274,8 @@ class ApplicationProjectSchemaIT {
         final long unknownTenantId = 888_888_888L;
         assertThatThrownBy(() ->
                 jdbcTemplate.update(
-                        "INSERT INTO pilotage.application (tenant_id, name) VALUES (?, 'Rogue')",
-                        unknownTenantId))
+                        "INSERT INTO pilotage.application (tenant_id, team_id, name) VALUES (?, ?, 'Rogue')",
+                        unknownTenantId, teamId))
                 .isInstanceOf(DataIntegrityViolationException.class);
     }
 }
