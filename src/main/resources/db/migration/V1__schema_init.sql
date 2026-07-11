@@ -132,6 +132,9 @@ CREATE TABLE IF NOT EXISTS pilotage.task (
     name                VARCHAR(512) NOT NULL,
     node_kind           VARCHAR(16)  NOT NULL,
     shared_in_roadmap   BOOLEAN      NOT NULL,
+    -- horizon (EN22.1c, contrat fige §c/§e) : bucket Now/Next/Later de la vue macro
+    -- (US22.3.3), nullable, pas d'axe temporel ni table dediee. NULL = non bucketise.
+    horizon             VARCHAR(8),
     temporal_precision  VARCHAR(16)  NOT NULL,
     fuzzy_period_start  DATE,
     fuzzy_period_end    DATE,
@@ -155,7 +158,9 @@ CREATE TABLE IF NOT EXISTS pilotage.task (
     CONSTRAINT chk_task_temporal_precision
         CHECK (temporal_precision IN ('SEMESTER', 'QUARTER', 'MONTH', 'WEEK', 'DAY')),
     CONSTRAINT chk_task_scheduling_mode
-        CHECK (scheduling_mode IS NULL OR scheduling_mode IN ('AUTO', 'MANUAL'))
+        CHECK (scheduling_mode IS NULL OR scheduling_mode IN ('AUTO', 'MANUAL')),
+    CONSTRAINT chk_task_horizon
+        CHECK (horizon IS NULL OR horizon IN ('NOW', 'NEXT', 'LATER'))
 );
 -- Auto-reference WBS + rattachement phase, ajoutes apres creation de task (et de phase).
 ALTER TABLE pilotage.task

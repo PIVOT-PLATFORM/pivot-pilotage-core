@@ -117,6 +117,7 @@ class SchedulePojoTest {
         assertThat(task.getRecurrenceRule()).isNull();
         assertThat(task.getFuzzyPeriodStart()).isNull();
         assertThat(task.getFuzzyPeriodEnd()).isNull();
+        assertThat(task.getHorizon()).isNull();
 
         task.setPhaseId(11L);
         task.setParentTaskId(12L);
@@ -133,6 +134,7 @@ class SchedulePojoTest {
         task.setSchedulingMode(SchedulingMode.MANUAL);
         task.setCalendarId(99L);
         task.setRecurrenceRule("FREQ=WEEKLY");
+        task.setHorizon(Horizon.NOW);
         task.setRevision(1);
 
         assertThat(task.getPhaseId()).isEqualTo(11L);
@@ -150,6 +152,7 @@ class SchedulePojoTest {
         assertThat(task.getSchedulingMode()).isEqualTo(SchedulingMode.MANUAL);
         assertThat(task.getCalendarId()).isEqualTo(99L);
         assertThat(task.getRecurrenceRule()).isEqualTo("FREQ=WEEKLY");
+        assertThat(task.getHorizon()).isEqualTo(Horizon.NOW);
         assertThat(task.getRevision()).isEqualTo(1);
 
         task.prePersist();
@@ -164,6 +167,7 @@ class SchedulePojoTest {
         assertThat(NodeKind.values()).containsExactly(
                 NodeKind.SUMMARY, NodeKind.LEAF, NodeKind.MILESTONE, NodeKind.RECURRING);
         assertThat(SchedulingMode.values()).containsExactly(SchedulingMode.AUTO, SchedulingMode.MANUAL);
+        assertThat(Horizon.values()).containsExactly(Horizon.NOW, Horizon.NEXT, Horizon.LATER);
         assertThat(TemporalPrecision.values()).containsExactly(
                 TemporalPrecision.SEMESTER, TemporalPrecision.QUARTER, TemporalPrecision.MONTH,
                 TemporalPrecision.WEEK, TemporalPrecision.DAY);

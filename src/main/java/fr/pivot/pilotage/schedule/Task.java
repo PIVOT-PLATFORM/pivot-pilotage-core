@@ -79,6 +79,15 @@ public class Task {
     @Column(name = "shared_in_roadmap", nullable = false)
     private Boolean sharedInRoadmap;
 
+    /**
+     * Now/Next/Later bucket of a high-level (initiative) node (EN22.1c, frozen contract §c/§e);
+     * {@code null} when the node is not bucketised. Drives the macro {@code buckets} projection
+     * (US22.3.3); a change emits a {@code HorizonChanged} event.
+     */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "horizon", length = 8)
+    private Horizon horizon;
+
     /** Effective altitude of the node — its temporal grain. */
     @Enumerated(EnumType.STRING)
     @Column(name = "temporal_precision", nullable = false, length = 16)
@@ -349,6 +358,24 @@ public class Task {
      */
     public void setSharedInRoadmap(final Boolean sharedInRoadmap) {
         this.sharedInRoadmap = sharedInRoadmap;
+    }
+
+    /**
+     * Returns the Now/Next/Later horizon bucket of this node (EN22.1c).
+     *
+     * @return the {@link Horizon}, or {@code null} if the node is not bucketised
+     */
+    public Horizon getHorizon() {
+        return horizon;
+    }
+
+    /**
+     * Sets the Now/Next/Later horizon bucket of this node (EN22.1c).
+     *
+     * @param horizon the horizon to set (may be {@code null})
+     */
+    public void setHorizon(final Horizon horizon) {
+        this.horizon = horizon;
     }
 
     /**
