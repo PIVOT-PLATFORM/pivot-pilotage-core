@@ -1,5 +1,9 @@
 package fr.pivot.pilotage.consolidation;
 
+import fr.pivot.pilotage.schedule.Task;
+
+import java.util.List;
+
 /**
  * Derived planning status of a project (EN18.9), computed <strong>only</strong> from data the
  * pilotage domain owns — the persisted temporal graph (EN22.1). It is <em>not</em> a persisted
@@ -23,5 +27,28 @@ public enum ProjectPlanningStatus {
     PLANNED,
 
     /** The project carries at least one task with a precise start/finish window (scheduled). */
-    SCHEDULED
+    SCHEDULED;
+
+    /**
+     * Derives a project's {@link ProjectPlanningStatus} from its tasks — the single formula shared by
+     * {@link ApplicationConsolidationService} (EN18.9, per-application roll-up) and
+     * {@code fr.pivot.pilotage.portfolio.PortfolioConsolidationService} (US23.2.1, multi-application
+     * portfolio view) so the "avancement/phases" status a project reports is computed identically
+     * wherever it is consolidated. No task → {@link #EMPTY}; at least one task with a precise
+     * start/finish window → {@link #SCHEDULED}; otherwise → {@link #PLANNED}.
+     *
+     * @param tasks the project's tasks (temporal graph, EN22.1)
+     * @return the derived planning status
+     */
+    public static ProjectPlanningStatus deriveFrom(final List<Task> tasks) {
+        if (tasks.isEmpty()) {
+            return EMPTY;
+        }
+        for (final Task task : tasks) {
+            if (task.getStartDate() != null || task.getFinishDate() != null) {
+                return SCHEDULED;
+            }
+        }
+        return PLANNED;
+    }
 }
