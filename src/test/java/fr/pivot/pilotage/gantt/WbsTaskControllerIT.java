@@ -1,6 +1,7 @@
 package fr.pivot.pilotage.gantt;
 
 import fr.pivot.pilotage.schedule.NodeKind;
+import fr.pivot.pilotage.schedule.engine.SchedulingWarning;
 import fr.pivot.pilotage.testsupport.PlatformSchemaTestSupport;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -85,6 +86,9 @@ class WbsTaskControllerIT {
 
     @MockitoBean
     private TaskEffortService taskEffortService;
+
+    @MockitoBean
+    private TaskConstraintService taskConstraintService;
 
     @MockitoBean
     private WbsEditPolicy editPolicy;
@@ -495,5 +499,128 @@ class WbsTaskControllerIT {
                 .andExpect(jsonPath("$.plannedManual").value("2024-01-04T09:00:00Z"))
                 .andExpect(jsonPath("$.wouldBeAuto").value("2024-01-02T09:00:00Z"))
                 .andExpect(jsonPath("$.deltaMinutes").value(960));
+    }
+
+    // ============================ US22.4.4 — contraintes de date & échéances ======================
+
+    private static TaskConstraintResponse asapNoWarnings() {
+        return new TaskConstraintResponse(TASK, fr.pivot.pilotage.schedule.ConstraintType.ASAP,
+                null, null, List.of());
+    }
+
+    private static TaskConstraintResponse mfoWithConflict() {
+        return new TaskConstraintResponse(TASK, fr.pivot.pilotage.schedule.ConstraintType.MFO,
+                java.time.Instant.parse("2024-01-02T17:00:00Z"), null,
+                List.of(new ConstraintWarningResponse(SchedulingWarning.WarningType.CONSTRAINT_CONFLICT,
+                        "constraint MFO precedes hard dependency; dependency honoured")));
+    }
+
+    // -------- read: not gated (Security AC — visible to every role) -------------------------------
+
+    @Test
+    void getConstraint_read_returns200_notGated() throws Exception {
+        when(editPolicy.isAuthorized()).thenReturn(false);
+        when(taskConstraintService.get(TENANT, TEAM, PROJECT, TASK)).thenReturn(asapNoWarnings());
+
+        mockMvc.perform(get(BASE + "/tasks/" + TASK + "/constraint"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.constraintType").value("ASAP"))
+                .andExpect(jsonPath("$.warnings").isEmpty());
+    }
+
+    @Test
+    void getConstraint_withWarning_returnsIt() throws Exception {
+        when(taskConstraintService.get(TENANT, TEAM, PROJECT, TASK)).thenReturn(mfoWithConflict());
+
+        mockMvc.perform(get(BASE + "/tasks/" + TASK + "/constraint"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.constraintType").value("MFO"))
+                .andExpect(jsonPath("$.warnings[0].type").value("CONSTRAINT_CONFLICT"));
+    }
+
+    @Test
+    void getConstraint_unknownTask_returns404() throws Exception {
+        when(taskConstraintService.get(TENANT, TEAM, PROJECT, TASK))
+                .thenThrow(new WbsTaskNotFoundException(TASK, PROJECT));
+
+        mockMvc.perform(get(BASE + "/tasks/" + TASK + "/constraint")).andExpect(status().isNotFound());
+    }
+
+    // -------- write: gated → 403, service never called --------------------------------------------
+
+    @Test
+    void setConstraint_unauthorized_returns403_andServiceNeverCalled() throws Exception {
+        when(editPolicy.isAuthorized()).thenReturn(false);
+
+        mockMvc.perform(put(BASE + "/tasks/" + TASK + "/constraint")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"constraintType\":\"ASAP\"}"))
+                .andExpect(status().isForbidden());
+
+        verify(taskConstraintService, never()).upsert(anyLong(), anyLong(), anyLong(), anyLong(),
+                any(UpsertTaskConstraintRequest.class));
+    }
+
+    // -------- write: authorized → 200, delegates ---------------------------------------------------
+
+    @Test
+    void setConstraint_authorized_returns200() throws Exception {
+        when(editPolicy.isAuthorized()).thenReturn(true);
+        when(taskConstraintService.upsert(eq(TENANT), eq(TEAM), eq(PROJECT), eq(TASK),
+                any(UpsertTaskConstraintRequest.class))).thenReturn(mfoWithConflict());
+
+        mockMvc.perform(put(BASE + "/tasks/" + TASK + "/constraint")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"constraintType\":\"MFO\",\"constraintDate\":\"2024-01-02T17:00:00Z\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.constraintType").value("MFO"))
+                .andExpect(jsonPath("$.warnings[0].type").value("CONSTRAINT_CONFLICT"));
+    }
+
+    // -------- write Error AC: date-bearing type without a date → 422 -------------------------------
+
+    @Test
+    void setConstraint_missingDate_returns422() throws Exception {
+        when(editPolicy.isAuthorized()).thenReturn(true);
+        when(taskConstraintService.upsert(eq(TENANT), eq(TEAM), eq(PROJECT), eq(TASK),
+                any(UpsertTaskConstraintRequest.class)))
+                .thenThrow(InvalidTaskConstraintException.missingConstraintDate(
+                        fr.pivot.pilotage.schedule.ConstraintType.SNET));
+
+        mockMvc.perform(put(BASE + "/tasks/" + TASK + "/constraint")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"constraintType\":\"SNET\"}"))
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(jsonPath("$.code").value(InvalidTaskConstraintException.CODE));
+    }
+
+    // -------- write Security AC: cross-tenant/team task → 404 non-disclosure -----------------------
+
+    @Test
+    void setConstraint_crossTenant_returns404() throws Exception {
+        when(editPolicy.isAuthorized()).thenReturn(true);
+        when(taskConstraintService.upsert(eq(TENANT), eq(TEAM), eq(PROJECT), eq(TASK),
+                any(UpsertTaskConstraintRequest.class)))
+                .thenThrow(new WbsProjectNotFoundException(PROJECT, TENANT, TEAM));
+
+        mockMvc.perform(put(BASE + "/tasks/" + TASK + "/constraint")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"constraintType\":\"ASAP\"}"))
+                .andExpect(status().isNotFound());
+    }
+
+    // -------- write: missing required constraintType → 400 (bean validation) -----------------------
+
+    @Test
+    void setConstraint_missingType_returns400() throws Exception {
+        when(editPolicy.isAuthorized()).thenReturn(true);
+
+        mockMvc.perform(put(BASE + "/tasks/" + TASK + "/constraint")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{}"))
+                .andExpect(status().isBadRequest());
+
+        verify(taskConstraintService, never()).upsert(anyLong(), anyLong(), anyLong(), anyLong(),
+                any(UpsertTaskConstraintRequest.class));
     }
 }
