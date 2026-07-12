@@ -16,6 +16,12 @@ import fr.pivot.pilotage.schedule.projection.SummaryAggregate;
 import fr.pivot.pilotage.schedule.service.SchedulingService;
 
 import java.math.BigDecimal;
+import java.math.MathContext;
+import java.math.RoundingMode;
+import java.time.Duration;
+import java.time.Instant;
+import java.time.LocalDate;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -87,7 +93,9 @@ public class WbsTaskService {
 
     /**
      * Reads a project's whole WBS as an ordered, pre-order (depth-first) tree, with server-derived
-     * WBS codes, summary aggregates and ARIA attributes for the tree widget.
+     * WBS codes, summary aggregates, ARIA attributes and, per node, the progress-line data
+     * (expected percent complete / late flag at the project's status date, US22.4.8 AC) for the
+     * tree widget.
      *
      * @param tenantId  the requesting tenant's {@code public.tenants.id}
      * @param teamId    the requesting team's {@code public.teams.id}
@@ -97,14 +105,14 @@ public class WbsTaskService {
      */
     @Transactional(readOnly = true)
     public WbsTreeResponse tree(final long tenantId, final long teamId, final long projectId) {
-        requireProject(tenantId, teamId, projectId);
+        final Project project = requireProject(tenantId, teamId, projectId);
         final List<Task> tasks = taskRepository.findAllByProjectIdAndTenantIdAndTeamId(projectId, tenantId, teamId);
         final Map<Long, SummaryAggregate> aggregates = aggregates(tenantId, projectId);
         final Map<Long, BigDecimal> leafPercent = leafPercents(tasks, tenantId, teamId);
 
         final Map<Long, List<Task>> childrenByParent = childrenByParent(tasks);
         final List<WbsTaskResponse> nodes = new ArrayList<>();
-        appendPreOrder(null, 1, childrenByParent, aggregates, leafPercent, nodes);
+        appendPreOrder(null, 1, childrenByParent, aggregates, leafPercent, project.getStatusDate(), nodes);
         return WbsTreeResponse.of(projectId, nodes);
     }
 
@@ -500,7 +508,7 @@ public class WbsTaskService {
      */
     private void appendPreOrder(final Long parentId, final int level, final Map<Long, List<Task>> childrenByParent,
             final Map<Long, SummaryAggregate> aggregates, final Map<Long, BigDecimal> leafPercent,
-            final List<WbsTaskResponse> out) {
+            final LocalDate statusDate, final List<WbsTaskResponse> out) {
         final List<Task> siblings = childrenByParent.get(parentId);
         if (siblings == null) {
             return;
@@ -508,14 +516,15 @@ public class WbsTaskService {
         final int setSize = siblings.size();
         int posInSet = 1;
         for (final Task t : siblings) {
-            out.add(toResponse(t, level, setSize, posInSet, aggregates, leafPercent));
-            appendPreOrder(t.getId(), level + 1, childrenByParent, aggregates, leafPercent, out);
+            out.add(toResponse(t, level, setSize, posInSet, aggregates, leafPercent, statusDate));
+            appendPreOrder(t.getId(), level + 1, childrenByParent, aggregates, leafPercent, statusDate, out);
             posInSet++;
         }
     }
 
     private static WbsTaskResponse toResponse(final Task t, final int level, final int setSize, final int posInSet,
-            final Map<Long, SummaryAggregate> aggregates, final Map<Long, BigDecimal> leafPercent) {
+            final Map<Long, SummaryAggregate> aggregates, final Map<Long, BigDecimal> leafPercent,
+            final LocalDate statusDate) {
         final boolean summary = t.getNodeKind() == NodeKind.SUMMARY;
         final SummaryAggregate agg = summary ? aggregates.get(t.getId()) : null;
 
@@ -526,12 +535,69 @@ public class WbsTaskService {
                 ? agg.percentComplete()
                 : leafPercent.getOrDefault(t.getId(), null);
         final String progressLabel = percent != null ? percent.stripTrailingZeros().toPlainString() + "%" : null;
+        final ProgressLine line = progressLine(start, finish, percent, statusDate);
 
         return new WbsTaskResponse(t.getId(), t.getParentTaskId(), t.getWbsCode(), t.getName(),
                 t.getNodeKind(), t.getPosition() == null ? 0 : t.getPosition(), start, finish, duration,
-                percent, progressLabel, summary, WbsTaskResponse.ARIA_ROLE_TREEITEM, level, setSize,
-                posInSet, summary, WbsTaskResponse.labelFor(t.getNodeKind()),
-                t.getRevision() == null ? 0 : t.getRevision());
+                percent, progressLabel, line.expectedPercentComplete(), line.late(), line.label(), summary,
+                WbsTaskResponse.ARIA_ROLE_TREEITEM, level, setSize, posInSet, summary,
+                WbsTaskResponse.labelFor(t.getNodeKind()), t.getRevision() == null ? 0 : t.getRevision());
+    }
+
+    // ---- progress line (US22.4.8 AC) -----------------------------------------------------------
+
+    /** Percent basis for the progress-line linear interpolation. */
+    private static final BigDecimal HUNDRED = new BigDecimal("100");
+
+    /** Rounding context for the expected-percent interpolation (matches the projection service). */
+    private static final MathContext PROGRESS_LINE_CONTEXT = new MathContext(6);
+
+    /**
+     * Computes, for one node, where its percent complete <em>should</em> be by the project's status
+     * date (linear interpolation over its own {@code [start, finish]}) and whether the actual
+     * percent falls short of it — the data the frontend needs to materialise the "progress line"
+     * (US22.4.8 AC). Not applicable (all {@code null}/{@code false}) when the node has no schedule
+     * or the project carries no status date yet.
+     */
+    private static ProgressLine progressLine(final Instant start, final Instant finish,
+            final BigDecimal actualPercent, final LocalDate statusDate) {
+        if (start == null || finish == null || statusDate == null || !finish.isAfter(start)) {
+            return ProgressLine.NOT_APPLICABLE;
+        }
+        final Instant statusInstant = statusDate.atStartOfDay(ZoneOffset.UTC).toInstant();
+        final BigDecimal actual = actualPercent != null ? actualPercent : BigDecimal.ZERO;
+        final BigDecimal expected;
+        if (!statusInstant.isAfter(start)) {
+            expected = BigDecimal.ZERO;
+        } else if (!statusInstant.isBefore(finish)) {
+            expected = HUNDRED;
+        } else {
+            final long totalMinutes = Duration.between(start, finish).toMinutes();
+            final long elapsedMinutes = Duration.between(start, statusInstant).toMinutes();
+            expected = BigDecimal.valueOf(elapsedMinutes)
+                    .multiply(HUNDRED)
+                    .divide(BigDecimal.valueOf(totalMinutes), PROGRESS_LINE_CONTEXT);
+        }
+        final boolean late = actual.compareTo(expected) < 0;
+        final String label = late ? lateLabel(start, finish, expected, actual) : "on track";
+        return new ProgressLine(expected, late, label);
+    }
+
+    /** Renders the "Nd late" text label (A11y) — at least one day whenever {@code late} is true. */
+    private static String lateLabel(final Instant start, final Instant finish, final BigDecimal expected,
+            final BigDecimal actual) {
+        final long totalMinutes = Duration.between(start, finish).toMinutes();
+        final BigDecimal deltaPercent = expected.subtract(actual);
+        final long varianceMinutes = deltaPercent.multiply(BigDecimal.valueOf(totalMinutes))
+                .divide(HUNDRED, 0, RoundingMode.HALF_UP)
+                .longValueExact();
+        final long varianceDays = Math.max(1, Math.round(varianceMinutes / (24.0 * 60)));
+        return varianceDays + "d late";
+    }
+
+    /** Progress-line data for one node — expected percent, lateness flag, and its A11y text label. */
+    private record ProgressLine(BigDecimal expectedPercentComplete, boolean late, String label) {
+        static final ProgressLine NOT_APPLICABLE = new ProgressLine(null, false, null);
     }
 
     // ---- shared guards --------------------------------------------------------------------------
