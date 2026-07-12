@@ -181,6 +181,20 @@ class WbsExceptionHandler {
     }
 
     /**
+     * Maps a rejected recurrence definition (missing/invalid frequency or occurrence count, or a
+     * count exceeding the generation cap, US22.4.6 error AC) to {@code 422 Unprocessable Entity} with
+     * an explicit message.
+     *
+     * @param ex the thrown exception
+     * @return a 422 response carrying a {@link WbsApiError} body
+     */
+    @ExceptionHandler(InvalidRecurrenceException.class)
+    ResponseEntity<WbsApiError> handleInvalidRecurrence(final InvalidRecurrenceException ex) {
+        return ResponseEntity.unprocessableEntity()
+                .body(new WbsApiError(InvalidRecurrenceException.CODE, ex.getMessage()));
+    }
+
+    /**
      * Maps an unreadable request body to the right status. A body carrying a server-derived property
      * (the WBS code or any engine-computed field — rejected because {@code fail-on-unknown-properties}
      * is on) is a client attempt to write a read-only field: that maps to {@code 422} (US22.4.1a /

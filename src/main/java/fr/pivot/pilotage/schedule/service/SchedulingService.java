@@ -131,6 +131,27 @@ public class SchedulingService {
     }
 
     /**
+     * Resolves a project's default working calendar (EN22.1a calendar rows plus exceptions, falling
+     * back to the standard Mon-Fri 09:00-17:00 business calendar when none is configured) &mdash; a
+     * read-only accessor reused by any Gantt feature that needs to snap a wall-clock instant into
+     * working time (US22.4.6 &mdash; periodic-task occurrence generation) without re-deriving
+     * calendar loading (Étape 0, reuse not reinvention) or re-running a full CPM pass.
+     *
+     * @param projectId the project id
+     * @param tenantId  the owning tenant id (isolation boundary)
+     * @return the project's effective default {@link WorkingCalendar}
+     * @throws ScheduleException if the project is not visible to the tenant
+     */
+    @Transactional(readOnly = true)
+    public WorkingCalendar defaultCalendar(final long projectId, final long tenantId) {
+        final Project project = projectRepository.findByIdAndTenantId(projectId, tenantId)
+                .orElseThrow(() -> new ScheduleException(ScheduleErrorCode.TENANT_VIOLATION,
+                        "project " + projectId + " not found for tenant " + tenantId));
+        final long defaultCalendarId = project.getCalendar() != null ? project.getCalendar().getId() : -1L;
+        return buildCalendars(projectId, tenantId, defaultCalendarId).get(defaultCalendarId);
+    }
+
+    /**
      * Builds the engine input from the persisted graph (tenant-scoped). Package-visible so tests can
      * exercise the mapping without a database.
      *
