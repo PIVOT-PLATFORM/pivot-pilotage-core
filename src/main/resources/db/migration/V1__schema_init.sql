@@ -330,6 +330,28 @@ CREATE TABLE IF NOT EXISTS pilotage.task_progress (
 CREATE INDEX IF NOT EXISTS idx_task_progress_tenant_id ON pilotage.task_progress(tenant_id);
 CREATE INDEX IF NOT EXISTS idx_task_progress_team_id   ON pilotage.task_progress(team_id);
 
+-- --- task_progress_history : audit trail append-only (US22.4.8 security AC) ---------------
+-- Une ligne par saisie d'avancement (jamais mise a jour) - distinct de task_progress (etat
+-- courant, UNIQUE task_id). actor_ref = reference LOGIQUE (identite resolue via bus PIVOT -
+-- ADR-006, aucune FK inter-modules, meme esprit que assignment.resource_ref) : TenantContext
+-- n'est pas encore consommable (gap pivot-core-starter, CLAUDE.md).
+CREATE TABLE IF NOT EXISTS pilotage.task_progress_history (
+    id                        BIGINT       GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    tenant_id                 BIGINT       NOT NULL REFERENCES public.tenants(id),
+    team_id                   BIGINT       NOT NULL REFERENCES public.teams(id),
+    task_id                   BIGINT       NOT NULL REFERENCES pilotage.task(id) ON DELETE CASCADE,
+    actor_ref                 VARCHAR(255) NOT NULL,
+    percent_complete          NUMERIC(5,2) NOT NULL,
+    physical_percent_complete NUMERIC(5,2),
+    actual_start              TIMESTAMPTZ,
+    actual_finish             TIMESTAMPTZ,
+    status_date               DATE,
+    recorded_at               TIMESTAMPTZ  NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_task_progress_history_tenant_id ON pilotage.task_progress_history(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_task_progress_history_team_id   ON pilotage.task_progress_history(team_id);
+CREATE INDEX IF NOT EXISTS idx_task_progress_history_task_id   ON pilotage.task_progress_history(task_id);
+
 -- --- baseline : 0..10 par projet + baseline_snapshot (fige par tache) ---------------------
 -- UNIQUE (project_id, baseline_index) + CHECK baseline_index 0..10.
 CREATE TABLE IF NOT EXISTS pilotage.baseline (
