@@ -2,6 +2,7 @@ package fr.pivot.pilotage.schedule;
 
 import org.springframework.data.jpa.repository.JpaRepository;
 
+import java.util.Collection;
 import java.util.List;
 
 /**
@@ -48,4 +49,17 @@ public interface AssignmentRepository extends JpaRepository<Assignment, Long> {
      * @return the assignments (possibly empty)
      */
     List<Assignment> findAllByTaskIdAndTenantIdAndTeamId(Long taskId, Long tenantId, Long teamId);
+
+    /**
+     * Finds all assignments of the given tasks within the given tenant and team, in one batch query
+     * (US22.4.9 baseline capture/variance) — avoids one query per task when a project's baseline is
+     * posed or its variance computed, keeping the operation a lightweight batch read rather than an
+     * N+1 walk even on a 10 000+ task plan (EN22.2 perf note).
+     *
+     * @param taskIds  the {@code pilotage.task.id} values to fetch assignments for
+     * @param tenantId the {@code public.tenants.id} to restrict results to
+     * @param teamId   the {@code public.teams.id} to restrict results to
+     * @return the assignments (possibly empty)
+     */
+    List<Assignment> findAllByTaskIdInAndTenantIdAndTeamId(Collection<Long> taskIds, Long tenantId, Long teamId);
 }

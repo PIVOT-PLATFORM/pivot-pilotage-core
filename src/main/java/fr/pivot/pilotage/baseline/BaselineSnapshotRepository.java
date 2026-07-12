@@ -30,4 +30,16 @@ public interface BaselineSnapshotRepository extends JpaRepository<BaselineSnapsh
      * @return the snapshots (possibly empty)
      */
     List<BaselineSnapshot> findAllByBaselineIdAndTenantIdAndTeamId(Long baselineId, Long tenantId, Long teamId);
+
+    /**
+     * Counts the snapshots of the given baseline within the given tenant and team (US22.4.9) — used
+     * to report {@code taskCount} on {@code fr.pivot.pilotage.baseline.BaselineResponse} without
+     * loading every snapshot row.
+     *
+     * @param baselineId the parent {@code pilotage.baseline.id}
+     * @param tenantId   the {@code public.tenants.id} to restrict results to
+     * @param teamId     the {@code public.teams.id} to restrict results to
+     * @return the number of snapshots belonging to that baseline
+     */
+    long countByBaselineIdAndTenantIdAndTeamId(Long baselineId, Long tenantId, Long teamId);
 }
