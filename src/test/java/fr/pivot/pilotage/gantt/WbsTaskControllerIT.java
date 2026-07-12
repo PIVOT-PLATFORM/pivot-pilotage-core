@@ -109,7 +109,8 @@ class WbsTaskControllerIT {
 
     private static WbsTaskResponse sampleNode() {
         return new WbsTaskResponse(TASK, null, "1", "Design", NodeKind.LEAF, 0, null, null, null,
-                null, null, null, false, null, false, WbsTaskResponse.ARIA_ROLE_TREEITEM, 1, 1, 1, false,
+                null, null, null, false, null, Boolean.TRUE, 0, 0, "Critical", false,
+                WbsTaskResponse.ARIA_ROLE_TREEITEM, 1, 1, 1, false,
                 WbsTaskResponse.labelFor(NodeKind.LEAF), 0);
     }
 
@@ -125,6 +126,21 @@ class WbsTaskControllerIT {
                 .andExpect(jsonPath("$.ariaRole").value("tree"))
                 .andExpect(jsonPath("$.nodes[0].wbsCode").value("1"))
                 .andExpect(jsonPath("$.nodes[0].ariaRole").value("treeitem"));
+    }
+
+    // -------- US22.4.7 AC: critical path (marge totale <= 0) & marges exposed on the tree read -----
+
+    @Test
+    void tree_exposesCriticalPathAndSlackFields() throws Exception {
+        when(wbsTaskService.tree(TENANT, TEAM, PROJECT))
+                .thenReturn(WbsTreeResponse.of(PROJECT, List.of(sampleNode())));
+
+        mockMvc.perform(get(BASE + "/tree"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.nodes[0].isCritical").value(true))
+                .andExpect(jsonPath("$.nodes[0].totalSlackMinutes").value(0))
+                .andExpect(jsonPath("$.nodes[0].freeSlackMinutes").value(0))
+                .andExpect(jsonPath("$.nodes[0].criticalLabel").value("Critical"));
     }
 
     @Test
@@ -433,6 +449,21 @@ class WbsTaskControllerIT {
         verify(taskEffortService, never()).setDuration(anyLong(), anyLong(), anyLong(), anyLong(), anyInt());
     }
 
+    // -------- US22.4.7 Security AC: writing the engine-derived slack fields → 422 -----------------
+
+    @Test
+    void setDuration_withSlackDerivedField_returns422_andServiceNeverCalled() throws Exception {
+        when(editPolicy.isAuthorized()).thenReturn(true);
+
+        mockMvc.perform(patch(BASE + "/tasks/" + TASK + "/duration")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"durationMinutes\":480,\"totalSlackMinutes\":0}"))
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(jsonPath("$.code").value(DerivedFieldNotEditableException.CODE));
+
+        verify(taskEffortService, never()).setDuration(anyLong(), anyLong(), anyLong(), anyLong(), anyInt());
+    }
+
     // -------- duration Security: cross-tenant → 404 ---------------------------------------------
 
     @Test
@@ -635,11 +666,13 @@ class WbsTaskControllerIT {
 
     private static RecurringTaskResponse recurringResponse() {
         final WbsTaskResponse series = new WbsTaskResponse(TASK, null, "1", "Comité hebdo",
-                NodeKind.RECURRING, 0, null, null, null, null, null, null, false, null, false,
+                NodeKind.RECURRING, 0, null, null, null, null, null, null, false, null,
+                null, null, null, null, false,
                 WbsTaskResponse.ARIA_ROLE_TREEITEM, 1, 1, 1, false,
                 WbsTaskResponse.labelFor(NodeKind.RECURRING), 0);
         final WbsTaskResponse occurrence = new WbsTaskResponse(TASK + 1, TASK, "1.1", "Comité hebdo — occurrence 1/3",
-                NodeKind.MILESTONE, 0, null, null, null, null, null, null, false, null, false,
+                NodeKind.MILESTONE, 0, null, null, null, null, null, null, false, null,
+                null, null, null, null, false,
                 WbsTaskResponse.ARIA_ROLE_TREEITEM, 2, 1, 1, false,
                 WbsTaskResponse.labelFor(NodeKind.MILESTONE), 0);
         return new RecurringTaskResponse(series, "FREQ=WEEKLY;INTERVAL=1;COUNT=3;DTSTART=2024-01-01",

@@ -9,6 +9,14 @@
  * ({@code SchedulingService}) and the summary rollups by the EN22.1c projection
  * ({@code PlanProjectionService}) — this package reuses both rather than recomputing them.
  *
+ * <p>The tree read also exposes the EN22.1b engine's critical-path flag and total/free slack per
+ * node (US22.4.7 — chemin critique &amp; marges): a pure read-side wiring of already-computed,
+ * already-persisted columns, gated by no edit policy (a read available to any caller who can reach
+ * the project) and never writable (a client-supplied value is rejected {@code 422}). The
+ * fractionnement (task split) half of the parent US backlog item is explicitly out of scope in this
+ * package — Sprint 10 Gate 1 READINESS reserve D1: {@code pilotage.task} carries no segment
+ * representation.
+ *
  * <p>It also owns the CRUD of typed dependencies (US22.4.3, {@link fr.pivot.pilotage.gantt.DependencyService}):
  * FS/SS/FF/SF links with a signed worked-minute lag/lead ({@code fr.pivot.pilotage.schedule.TaskDependency}
  * rows). Each mutation persists the edge and re-runs the CPM through {@code SchedulingService} inside

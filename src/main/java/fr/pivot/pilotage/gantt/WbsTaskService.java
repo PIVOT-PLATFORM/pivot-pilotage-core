@@ -537,9 +537,19 @@ public class WbsTaskService {
         final String progressLabel = percent != null ? percent.stripTrailingZeros().toPlainString() + "%" : null;
         final ProgressLine line = progressLine(start, finish, percent, statusDate);
 
+        // US22.4.7 — chemin critique & marges: pure exposure of the EN22.1b engine's persisted
+        // columns, nothing recomputed here. A summary rolls up `critical` (any-leaf-critical, same
+        // semantics as SummaryAggregate#critical); slack has no rollup meaning for a summary (the
+        // frozen SummaryAggregate contract, EN22.1c §c, does not define it), so it stays null there.
+        final Boolean critical = agg != null ? Boolean.valueOf(agg.critical()) : t.getCritical();
+        final Integer totalSlack = summary ? null : t.getTotalSlackMinutes();
+        final Integer freeSlack = summary ? null : t.getFreeSlackMinutes();
+        final String criticalLabel = critical == null ? null : (critical ? "Critical" : "Not critical");
+
         return new WbsTaskResponse(t.getId(), t.getParentTaskId(), t.getWbsCode(), t.getName(),
                 t.getNodeKind(), t.getPosition() == null ? 0 : t.getPosition(), start, finish, duration,
-                percent, progressLabel, line.expectedPercentComplete(), line.late(), line.label(), summary,
+                percent, progressLabel, line.expectedPercentComplete(), line.late(), line.label(),
+                critical, totalSlack, freeSlack, criticalLabel, summary,
                 WbsTaskResponse.ARIA_ROLE_TREEITEM, level, setSize, posInSet, summary,
                 WbsTaskResponse.labelFor(t.getNodeKind()), t.getRevision() == null ? 0 : t.getRevision());
     }

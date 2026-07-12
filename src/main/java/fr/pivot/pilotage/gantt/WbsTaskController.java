@@ -17,9 +17,10 @@ import org.springframework.web.bind.annotation.RestController;
 /**
  * REST controller exposing the WBS (Work Breakdown Structure) of a project's detailed Gantt
  * (F22.4 — US22.4.1a modèle arborescent &amp; numérotation, US22.4.1b indent/outdent &amp;
- * réordonnancement, US22.4.1c agrégation des tâches récapitulatives). Thin by design (CLAUDE.md
- * §Standards): the role gate is delegated to {@link WbsEditPolicy} and every operation to
- * {@link WbsTaskService}; errors are mapped by {@link WbsExceptionHandler}.
+ * réordonnancement, US22.4.1c agrégation des tâches récapitulatives, US22.4.7 chemin critique
+ * &amp; marges). Thin by design (CLAUDE.md §Standards): the role gate is delegated to
+ * {@link WbsEditPolicy} and every operation to {@link WbsTaskService}; errors are mapped by
+ * {@link WbsExceptionHandler}.
  *
  * <p><strong>URL shape — gap-era, mirrors {@code RoadmapController}.</strong>
  * {@code pivot-core-starter} (TenantContext) is not published (CLAUDE.md §gap, TODO-SETUP §5), so
@@ -30,7 +31,12 @@ import org.springframework.web.bind.annotation.RestController;
  *
  * <p><strong>Contract</strong>
  * <ul>
- *   <li>{@code GET  .../gantt/tree} — read the ordered WBS tree (role="tree" + treeitems).</li>
+ *   <li>{@code GET  .../gantt/tree} — read the ordered WBS tree (role="tree" + treeitems), each
+ *       node carrying the EN22.1b engine-derived critical-path flag and total/free slack
+ *       (US22.4.7 — chemin critique &amp; marges; never gated, a read available to anyone who can
+ *       reach the project). The fractionnement (task split) part of the parent US is out of scope
+ *       here — Sprint 10 Gate 1 READINESS reserve D1, no segment representation in the EN22.1
+ *       schema.</li>
  *   <li>{@code POST .../gantt/tasks} — create a task, optionally under a parent (write, gated). A
  *       body carrying {@code wbsCode} is rejected {@code 422} (derived field).</li>
  *   <li>{@code PATCH .../gantt/tasks/{taskId}/indent} — indent (write, gated).</li>
