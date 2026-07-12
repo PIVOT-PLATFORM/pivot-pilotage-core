@@ -161,6 +161,31 @@ class WbsTaskServiceIT {
         assertThat(childB.ariaPosInSet()).isEqualTo(2);
     }
 
+    // -------- US22.4.6 AC1: a task created with duration 0 displays as a milestone ------------------
+
+    @Test
+    void createTask_zeroDuration_becomesMilestone() {
+        final WbsTaskResponse created = wbsTaskService.createTask(tenantId, teamId, projectId,
+                new CreateWbsTaskRequest("Kickoff", null, null, 0));
+
+        assertThat(created.nodeKind()).isEqualTo(NodeKind.MILESTONE);
+        assertThat(created.nodeKindLabel()).isEqualTo(WbsTaskResponse.labelFor(NodeKind.MILESTONE));
+        assertThat(node(created.taskId()).nodeKind()).isEqualTo(NodeKind.MILESTONE);
+    }
+
+    // -------- US22.4.6 AC1 (control): a positive or absent duration stays a plain task ---------------
+
+    @Test
+    void createTask_positiveOrAbsentDuration_staysLeaf() {
+        final WbsTaskResponse withDuration = wbsTaskService.createTask(tenantId, teamId, projectId,
+                new CreateWbsTaskRequest("A", null, null, 480));
+        final WbsTaskResponse noDuration = wbsTaskService.createTask(tenantId, teamId, projectId,
+                new CreateWbsTaskRequest("B", null, null, null));
+
+        assertThat(withDuration.nodeKind()).isEqualTo(NodeKind.LEAF);
+        assertThat(noDuration.nodeKind()).isEqualTo(NodeKind.LEAF);
+    }
+
     // -------- US22.4.1b AC: indent makes a task the child of its preceding sibling, WBS recalculated
 
     @Test
