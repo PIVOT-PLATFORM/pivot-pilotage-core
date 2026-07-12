@@ -41,6 +41,10 @@ import java.time.Instant;
  * @param ariaSetSize     number of siblings sharing this node's parent (A11y {@code aria-setsize})
  * @param ariaPosInSet    1-based rank among those siblings (A11y {@code aria-posinset})
  * @param ariaReadOnly    A11y {@code aria-readonly}, mirrors {@link #readOnly}
+ * @param nodeKindLabel   stable, human-readable text label for {@link #nodeKind} (e.g.
+ *                        {@code "Milestone"}, {@code "Recurring task series"}) — US22.4.6 A11y AC:
+ *                        a milestone's diamond glyph and a periodic task's occurrences must be
+ *                        identifiable by an accessible text label, never shape/colour alone
  * @param revision        monotonic revision — optimistic co-editing lock and event ordering
  */
 public record WbsTaskResponse(
@@ -61,8 +65,27 @@ public record WbsTaskResponse(
         int ariaSetSize,
         int ariaPosInSet,
         boolean ariaReadOnly,
+        String nodeKindLabel,
         int revision) {
 
     /** ARIA role of a WBS tree node — a {@code treeitem} inside the widget's {@code role="tree"}. */
     public static final String ARIA_ROLE_TREEITEM = "treeitem";
+
+    /**
+     * Maps a {@link NodeKind} to its stable, human-readable A11y text label (US22.4.6 AC) — kept
+     * here, next to the field it fills, so every producer of a {@link WbsTaskResponse}
+     * ({@code WbsTaskService}, {@code RecurringTaskService}) derives the identical label rather than
+     * re-inventing a kind-to-text mapping.
+     *
+     * @param nodeKind the node kind
+     * @return the accessible label
+     */
+    public static String labelFor(final NodeKind nodeKind) {
+        return switch (nodeKind) {
+            case SUMMARY -> "Summary task";
+            case LEAF -> "Task";
+            case MILESTONE -> "Milestone";
+            case RECURRING -> "Recurring task series";
+        };
+    }
 }
