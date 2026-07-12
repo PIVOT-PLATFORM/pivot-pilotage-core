@@ -58,6 +58,12 @@ import org.springframework.web.bind.annotation.RestController;
  *       {@code durationMinutes=0} is auto-classified a milestone (US22.4.6 AC1) — no dedicated
  *       endpoint, the existing create path already covers it. A missing/invalid frequency or
  *       occurrence count is rejected {@code 422}.</li>
+ *   <li>{@code PATCH  .../gantt/tasks/{taskId}/progress} — record percent complete, physical
+ *       percent, actual start/finish and this entry's status date (US22.4.8, write, gated); the
+ *       bar and the actual/remaining work update together. Out-of-range percent or an actual
+ *       finish before the actual start is rejected {@code 422}. A summary task (aggregated,
+ *       read-only) is also {@code 422}. The progress-line data (expected percent / late flag at
+ *       the project's status date) is exposed per node by {@code GET .../gantt/tree}.</li>
  * </ul>
  */
 @RestController
@@ -69,6 +75,7 @@ public class WbsTaskController {
     private final TaskEffortService taskEffortService;
     private final TaskConstraintService taskConstraintService;
     private final RecurringTaskService recurringTaskService;
+    private final TaskProgressService taskProgressService;
     private final WbsEditPolicy editPolicy;
 
     /**
@@ -79,17 +86,20 @@ public class WbsTaskController {
      * @param taskEffortService     the duration/effort/scheduling-mode business logic (US22.4.2)
      * @param taskConstraintService the constraint/deadline business logic (US22.4.4)
      * @param recurringTaskService  the periodic-task series/occurrences business logic (US22.4.6)
+     * @param taskProgressService   the progress-tracking business logic (US22.4.8)
      * @param editPolicy            the role-gate extension point for writes (deny-all until the
      *                              starter publishes membership, mirrors {@code RoadmapEditPolicy})
      */
     public WbsTaskController(final WbsTaskService wbsTaskService, final DependencyService dependencyService,
             final TaskEffortService taskEffortService, final TaskConstraintService taskConstraintService,
-            final RecurringTaskService recurringTaskService, final WbsEditPolicy editPolicy) {
+            final RecurringTaskService recurringTaskService, final TaskProgressService taskProgressService,
+            final WbsEditPolicy editPolicy) {
         this.wbsTaskService = wbsTaskService;
         this.dependencyService = dependencyService;
         this.taskEffortService = taskEffortService;
         this.taskConstraintService = taskConstraintService;
         this.recurringTaskService = recurringTaskService;
+        this.taskProgressService = taskProgressService;
         this.editPolicy = editPolicy;
     }
 
@@ -386,6 +396,31 @@ public class WbsTaskController {
         requireEditAuthorized();
         return ResponseEntity.status(HttpStatus.CREATED)
                 .body(recurringTaskService.createRecurringTask(tenantId, teamId, projectId, request));
+    }
+
+    /**
+     * Sets a task's progress (percent complete, optional physical percent, actual start/finish and
+     * this entry's status/freshness date) and recomputes the actual/remaining work of its
+     * assignments (US22.4.8, write, gated). The service appends the audit trail entry (author,
+     * date — security AC).
+     *
+     * @param tenantId  the tenant's {@code public.tenants.id}
+     * @param teamId    the team's {@code public.teams.id}
+     * @param projectId the project id
+     * @param taskId    the task to edit
+     * @param request   the progress payload
+     * @return {@code 200 OK} with the refreshed progress state; {@code 403} if unauthorized;
+     *         {@code 404} if not visible; {@code 422} if the percent is out of {@code [0, 100]},
+     *         the actual finish precedes the actual start, the task is a summary (derived,
+     *         read-only), or a derived field ({@code actualWorkMinutes}/{@code remainingWorkMinutes})
+     *         is supplied
+     */
+    @PatchMapping("/tasks/{taskId}/progress")
+    public ResponseEntity<TaskProgressResponse> setProgress(@PathVariable final long tenantId,
+            @PathVariable final long teamId, @PathVariable final long projectId,
+            @PathVariable final long taskId, @Valid @RequestBody final UpdateTaskProgressRequest request) {
+        requireEditAuthorized();
+        return ResponseEntity.ok(taskProgressService.setProgress(tenantId, teamId, projectId, taskId, request));
     }
 
     /**

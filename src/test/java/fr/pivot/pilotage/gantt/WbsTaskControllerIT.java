@@ -94,6 +94,9 @@ class WbsTaskControllerIT {
     private RecurringTaskService recurringTaskService;
 
     @MockitoBean
+    private TaskProgressService taskProgressService;
+
+    @MockitoBean
     private WbsEditPolicy editPolicy;
 
     private MockMvc mockMvc;
@@ -106,7 +109,7 @@ class WbsTaskControllerIT {
 
     private static WbsTaskResponse sampleNode() {
         return new WbsTaskResponse(TASK, null, "1", "Design", NodeKind.LEAF, 0, null, null, null,
-                null, null, false, WbsTaskResponse.ARIA_ROLE_TREEITEM, 1, 1, 1, false,
+                null, null, null, false, null, false, WbsTaskResponse.ARIA_ROLE_TREEITEM, 1, 1, 1, false,
                 WbsTaskResponse.labelFor(NodeKind.LEAF), 0);
     }
 
@@ -632,11 +635,11 @@ class WbsTaskControllerIT {
 
     private static RecurringTaskResponse recurringResponse() {
         final WbsTaskResponse series = new WbsTaskResponse(TASK, null, "1", "Comité hebdo",
-                NodeKind.RECURRING, 0, null, null, null, null, null, false,
+                NodeKind.RECURRING, 0, null, null, null, null, null, null, false, null, false,
                 WbsTaskResponse.ARIA_ROLE_TREEITEM, 1, 1, 1, false,
                 WbsTaskResponse.labelFor(NodeKind.RECURRING), 0);
         final WbsTaskResponse occurrence = new WbsTaskResponse(TASK + 1, TASK, "1.1", "Comité hebdo — occurrence 1/3",
-                NodeKind.MILESTONE, 0, null, null, null, null, null, false,
+                NodeKind.MILESTONE, 0, null, null, null, null, null, null, false, null, false,
                 WbsTaskResponse.ARIA_ROLE_TREEITEM, 2, 1, 1, false,
                 WbsTaskResponse.labelFor(NodeKind.MILESTONE), 0);
         return new RecurringTaskResponse(series, "FREQ=WEEKLY;INTERVAL=1;COUNT=3;DTSTART=2024-01-01",
@@ -708,6 +711,125 @@ class WbsTaskControllerIT {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"name\":\"Comité hebdo\",\"firstOccurrenceDate\":\"2024-01-01\","
                                 + "\"frequency\":\"WEEKLY\",\"occurrenceCount\":3}"))
+                .andExpect(status().isNotFound());
+    }
+
+    // ============================ US22.4.8 — progress tracking ===================================
+
+    private static TaskProgressResponse progressState() {
+        return new TaskProgressResponse(TASK, new java.math.BigDecimal("45"), "45%", null, 216, 264, 480,
+                null, null, null, 1);
+    }
+
+    // -------- progress: gated write → 403, service never called ----------------------------------
+
+    @Test
+    void setProgress_unauthorized_returns403_andServiceNeverCalled() throws Exception {
+        when(editPolicy.isAuthorized()).thenReturn(false);
+
+        mockMvc.perform(patch(BASE + "/tasks/" + TASK + "/progress")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"percentComplete\":45,\"actorRef\":\"user:alice\"}"))
+                .andExpect(status().isForbidden());
+
+        verify(taskProgressService, never()).setProgress(anyLong(), anyLong(), anyLong(), anyLong(), any());
+    }
+
+    // -------- progress: authorized → 200, delegates, bar + remaining work refreshed --------------
+
+    @Test
+    void setProgress_authorized_returns200WithBarAndRemainingWork() throws Exception {
+        when(editPolicy.isAuthorized()).thenReturn(true);
+        when(taskProgressService.setProgress(eq(TENANT), eq(TEAM), eq(PROJECT), eq(TASK),
+                any(UpdateTaskProgressRequest.class))).thenReturn(progressState());
+
+        mockMvc.perform(patch(BASE + "/tasks/" + TASK + "/progress")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"percentComplete\":45,\"actorRef\":\"user:alice\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.percentComplete").value(45))
+                .andExpect(jsonPath("$.progressLabel").value("45%"))
+                .andExpect(jsonPath("$.actualWorkMinutes").value(216))
+                .andExpect(jsonPath("$.remainingWorkMinutes").value(264));
+    }
+
+    // -------- progress Error: out-of-range percent → 422 (service guard) -------------------------
+
+    @Test
+    void setProgress_percentOutOfRange_returns422() throws Exception {
+        when(editPolicy.isAuthorized()).thenReturn(true);
+        when(taskProgressService.setProgress(eq(TENANT), eq(TEAM), eq(PROJECT), eq(TASK),
+                any(UpdateTaskProgressRequest.class)))
+                .thenThrow(InvalidTaskProgressException.percentOutOfRange(new java.math.BigDecimal("120")));
+
+        mockMvc.perform(patch(BASE + "/tasks/" + TASK + "/progress")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"percentComplete\":120,\"actorRef\":\"user:alice\"}"))
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(jsonPath("$.code").value(InvalidTaskProgressException.CODE));
+    }
+
+    // -------- progress Error: actual finish before actual start → 422 ----------------------------
+
+    @Test
+    void setProgress_actualFinishBeforeActualStart_returns422() throws Exception {
+        when(editPolicy.isAuthorized()).thenReturn(true);
+        when(taskProgressService.setProgress(eq(TENANT), eq(TEAM), eq(PROJECT), eq(TASK),
+                any(UpdateTaskProgressRequest.class)))
+                .thenThrow(InvalidTaskProgressException.actualFinishBeforeActualStart(
+                        java.time.Instant.parse("2026-01-10T00:00:00Z"), java.time.Instant.parse("2026-01-01T00:00:00Z")));
+
+        mockMvc.perform(patch(BASE + "/tasks/" + TASK + "/progress")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"percentComplete\":45,\"actualStart\":\"2026-01-10T00:00:00Z\","
+                                + "\"actualFinish\":\"2026-01-01T00:00:00Z\",\"actorRef\":\"user:alice\"}"))
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(jsonPath("$.code").value(InvalidTaskProgressException.CODE));
+    }
+
+    // -------- progress Error: a summary task's percent is derived (read-only) → 422 --------------
+
+    @Test
+    void setProgress_summaryTask_returns422() throws Exception {
+        when(editPolicy.isAuthorized()).thenReturn(true);
+        when(taskProgressService.setProgress(eq(TENANT), eq(TEAM), eq(PROJECT), eq(TASK),
+                any(UpdateTaskProgressRequest.class)))
+                .thenThrow(DerivedFieldNotEditableException.summaryField(TASK, "percentComplete"));
+
+        mockMvc.perform(patch(BASE + "/tasks/" + TASK + "/progress")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"percentComplete\":45,\"actorRef\":\"user:alice\"}"))
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(jsonPath("$.code").value(DerivedFieldNotEditableException.CODE));
+    }
+
+    // -------- progress Error: a derived work field in the body → 422 ------------------------------
+
+    @Test
+    void setProgress_withDerivedField_returns422_andServiceNeverCalled() throws Exception {
+        when(editPolicy.isAuthorized()).thenReturn(true);
+
+        mockMvc.perform(patch(BASE + "/tasks/" + TASK + "/progress")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"percentComplete\":45,\"actorRef\":\"user:alice\",\"remainingWorkMinutes\":10}"))
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(jsonPath("$.code").value(DerivedFieldNotEditableException.CODE));
+
+        verify(taskProgressService, never()).setProgress(anyLong(), anyLong(), anyLong(), anyLong(), any());
+    }
+
+    // -------- progress Security: cross-tenant → 404 -----------------------------------------------
+
+    @Test
+    void setProgress_crossTenant_returns404() throws Exception {
+        when(editPolicy.isAuthorized()).thenReturn(true);
+        when(taskProgressService.setProgress(eq(TENANT), eq(TEAM), eq(PROJECT), eq(TASK),
+                any(UpdateTaskProgressRequest.class)))
+                .thenThrow(new WbsProjectNotFoundException(PROJECT, TENANT, TEAM));
+
+        mockMvc.perform(patch(BASE + "/tasks/" + TASK + "/progress")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"percentComplete\":45,\"actorRef\":\"user:alice\"}"))
                 .andExpect(status().isNotFound());
     }
 }
