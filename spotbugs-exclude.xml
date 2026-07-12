@@ -80,4 +80,25 @@
         <Class name="fr.pivot.pilotage.gantt.RecurringTaskService"/>
     </Match>
 
+    <!--
+        EI_EXPOSE_REP / EI_EXPOSE_REP2 sur DashboardWidget.getDashboardConfig()/
+        setDashboardConfig(DashboardConfig) (US23.2.2) : entité JPA @ManyToOne back-reference,
+        getters/setters mutables exigés par Hibernate (même raisonnement que les packages project/
+        schedule/baseline/profile ci-dessus). Ciblé sur la classe seule (pas tout le package
+        fr.pivot.pilotage.dashboard) : ce package mélange entités JPA (DashboardConfig,
+        DashboardWidget) et DTOs/records (DashboardResponse, DashboardIndicatorView,
+        SaveDashboardRequest...) qui prennent au contraire des copies défensives (List/Map.copyOf)
+        et restent couverts par le check hors de cette exclusion ciblée — DashboardConfig n'a pas
+        besoin de cette exclusion : son accesseur getWidgets() retourne déjà une vue non
+        modifiable (Collections.unmodifiableList).
+    -->
+    <Match>
+        <Bug pattern="EI_EXPOSE_REP,EI_EXPOSE_REP2"/>
+        <Class name="fr.pivot.pilotage.dashboard.DashboardWidget"/>
+        <Or>
+            <Method name="getDashboardConfig"/>
+            <Method name="setDashboardConfig"/>
+        </Or>
+    </Match>
+
 </FindBugsFilter>
