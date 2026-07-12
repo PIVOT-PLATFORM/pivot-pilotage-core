@@ -99,7 +99,7 @@ public class ApplicationConsolidationService {
         for (final Project project : projects) {
             final List<Task> tasks = taskRepository
                     .findAllByProjectIdAndTenantId(project.getId(), tenantId);
-            increment(byStatus, planningStatusOf(tasks));
+            increment(byStatus, ProjectPlanningStatus.deriveFrom(tasks));
 
             for (final Task task : tasks) {
                 final LocalDate start = startOf(task);
@@ -151,24 +151,6 @@ public class ApplicationConsolidationService {
     private static void increment(final Map<ProjectPlanningStatus, Integer> byStatus,
             final ProjectPlanningStatus status) {
         byStatus.merge(status, 1, Integer::sum);
-    }
-
-    /**
-     * Derives a project's {@link ProjectPlanningStatus} from the temporal graph the pilotage domain
-     * owns (no persisted lifecycle column exists — EN18.1 defined none, EN18.9 adds none): no task
-     * → {@code EMPTY}; at least one task with a precise start/finish window → {@code SCHEDULED};
-     * otherwise → {@code PLANNED}.
-     */
-    private static ProjectPlanningStatus planningStatusOf(final List<Task> tasks) {
-        if (tasks.isEmpty()) {
-            return ProjectPlanningStatus.EMPTY;
-        }
-        for (final Task task : tasks) {
-            if (task.getStartDate() != null || task.getFinishDate() != null) {
-                return ProjectPlanningStatus.SCHEDULED;
-            }
-        }
-        return ProjectPlanningStatus.PLANNED;
     }
 
     /**
