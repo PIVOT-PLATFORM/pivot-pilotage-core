@@ -4,6 +4,7 @@ import fr.pivot.pilotage.project.Application;
 import fr.pivot.pilotage.project.ApplicationRepository;
 import fr.pivot.pilotage.project.Project;
 import fr.pivot.pilotage.project.ProjectRepository;
+import fr.pivot.pilotage.schedule.DependencyLinkType;
 import fr.pivot.pilotage.schedule.NodeKind;
 import fr.pivot.pilotage.schedule.Task;
 import fr.pivot.pilotage.schedule.TaskProgress;
@@ -67,6 +68,7 @@ class WbsTaskServiceIT {
     @Autowired private TaskRepository taskRepository;
     @Autowired private TaskProgressRepository progressRepository;
     @Autowired private WbsTaskService wbsTaskService;
+    @Autowired private DependencyService dependencyService;
 
     private long tenantId;
     private long teamId;
@@ -99,6 +101,16 @@ class WbsTaskServiceIT {
     private WbsTaskResponse create(final String name, final Long parent) {
         return wbsTaskService.createTask(tenantId, teamId, projectId,
                 new CreateWbsTaskRequest(name, parent, null, null));
+    }
+
+    private WbsTaskResponse createWithDuration(final String name, final Long parent, final int durationMinutes) {
+        return wbsTaskService.createTask(tenantId, teamId, projectId,
+                new CreateWbsTaskRequest(name, parent, null, durationMinutes));
+    }
+
+    private void linkFs(final long predecessorTaskId, final long successorTaskId) {
+        dependencyService.create(tenantId, teamId, projectId,
+                new CreateDependencyRequest(predecessorTaskId, successorTaskId, DependencyLinkType.FS, null));
     }
 
     private WbsTaskResponse node(final long taskId) {
@@ -381,6 +393,47 @@ class WbsTaskServiceIT {
         assertThat(node.late()).isFalse();
         assertThat(node.expectedPercentComplete()).isNull();
         assertThat(node.progressVarianceLabel()).isNull();
+    }
+
+    // -------- US22.4.7 AC: critical tasks (marge totale <= 0) highlighted, marges affichées ---------
+
+    @Test
+    void criticalPath_flagsLongerBranchCritical_andExposesPositiveSlackOnTheShorterOne() {
+        // Diamond: A (1 day) and B (half day) both feed C — A is the longer branch (zero slack),
+        // B has spare time before C actually needs it (positive total/free slack), C converges both.
+        final WbsTaskResponse a = createWithDuration("A", null, 480);
+        final WbsTaskResponse b = createWithDuration("B", null, 240);
+        final WbsTaskResponse c = createWithDuration("C", null, 60);
+        linkFs(a.taskId(), c.taskId());
+        linkFs(b.taskId(), c.taskId());
+
+        final WbsTaskResponse nodeA = node(a.taskId());
+        assertThat(nodeA.isCritical()).isTrue();
+        assertThat(nodeA.totalSlackMinutes()).isZero();
+        assertThat(nodeA.criticalLabel()).isEqualTo("Critical");
+
+        final WbsTaskResponse nodeB = node(b.taskId());
+        assertThat(nodeB.isCritical()).isFalse();
+        assertThat(nodeB.totalSlackMinutes()).isPositive();
+        assertThat(nodeB.freeSlackMinutes()).isPositive();
+        assertThat(nodeB.criticalLabel()).isEqualTo("Not critical");
+
+        final WbsTaskResponse nodeC = node(c.taskId());
+        assertThat(nodeC.isCritical()).isTrue();
+        assertThat(nodeC.totalSlackMinutes()).isZero();
+    }
+
+    @Test
+    void summary_rollsUpCriticalFlag_butNotSlack_noRollupDefinedForFloat() {
+        final WbsTaskResponse phase = create("Phase", null);
+        // sole child of a fresh project ⇒ trivially on the (only) critical path.
+        final WbsTaskResponse leaf = createWithDuration("Only task", phase.taskId(), 480);
+
+        assertThat(node(leaf.taskId()).isCritical()).isTrue();
+        final WbsTaskResponse summary = node(phase.taskId());
+        assertThat(summary.isCritical()).isTrue();
+        assertThat(summary.totalSlackMinutes()).isNull();
+        assertThat(summary.freeSlackMinutes()).isNull();
     }
 
     // -------- Security AC: cross-tenant / cross-team isolation (404-equivalent) --------------------

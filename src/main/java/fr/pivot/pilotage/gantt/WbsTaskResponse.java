@@ -6,11 +6,12 @@ import java.math.BigDecimal;
 import java.time.Instant;
 
 /**
- * Response DTO for one node of a project's WBS tree (US22.4.1a/b/c, extended US22.4.8) — never the
- * JPA entity directly (CLAUDE.md §Standards). Returned flattened in a pre-order (depth-first)
- * traversal by {@link WbsTaskService#tree}; the {@link #ariaLevel}/{@link #ariaSetSize}/
- * {@link #ariaPosInSet} attributes let the future {@code pivot-pilotage-ui} widget render a
- * {@code role="tree"} directly from this payload without recomputing the hierarchy client-side.
+ * Response DTO for one node of a project's WBS tree (US22.4.1a/b/c, extended US22.4.7 critical
+ * path/slack, US22.4.8 progress line) — never the JPA entity directly (CLAUDE.md §Standards).
+ * Returned flattened in a pre-order (depth-first) traversal by {@link WbsTaskService#tree}; the
+ * {@link #ariaLevel}/{@link #ariaSetSize}/{@link #ariaPosInSet} attributes let the future
+ * {@code pivot-pilotage-ui} widget render a {@code role="tree"} directly from this payload without
+ * recomputing the hierarchy client-side.
  *
  * <p><strong>Summary vs. leaf (US22.4.1c).</strong> When {@link #nodeKind} is {@code SUMMARY} the
  * temporal fields ({@link #startDate}, {@link #finishDate}, {@link #durationMinutes},
@@ -31,6 +32,21 @@ import java.time.Instant;
  * {@code "3d late"}, {@code "on track"}), again never colour-only (A11y AC). All three are
  * {@code null}/{@code false} when the node has no schedule (dates) or the project has no status
  * date yet — the line does not apply.
+ *
+ * <p><strong>Critical path &amp; slack (US22.4.7).</strong> {@link #isCritical}, {@link
+ * #totalSlackMinutes} and {@link #freeSlackMinutes} are read-only exposure of the CPM columns
+ * already computed and persisted by the EN22.1b engine ({@code SchedulingService}) — nothing is
+ * (re)computed here. A write attempt on any of them is rejected {@code 422} by
+ * {@link WbsExceptionHandler}. A leaf/milestone carries its own engine-derived values; a summary
+ * rolls up {@link #isCritical} (true if at least one descendant leaf is critical — the same
+ * {@code SummaryAggregate#critical} semantics as the other aggregated fields), but {@link
+ * #totalSlackMinutes}/{@link #freeSlackMinutes} stay {@code null} on a summary: "float of a rollup"
+ * has no CPM meaning, and {@code SummaryAggregate} (EN22.1c, frozen contract §c) deliberately does
+ * not define it. {@link #criticalLabel} carries a textual alternative to the boolean flag so the
+ * Gantt's critical-path highlighting never relies on colour alone (A11y AC), the same pattern as
+ * {@link #progressLabel}; it is {@code null} exactly when {@link #isCritical} is (not yet scheduled).
+ * The fractionnement (task split) AC of the parent US is explicitly out of scope here — Sprint 10
+ * Gate 1 READINESS reserve D1: no segment representation exists in the EN22.1 schema.
  *
  * @param taskId                  stable task id
  * @param parentTaskId            WBS parent task id, or {@code null} at the root
@@ -55,6 +71,18 @@ import java.time.Instant;
  * @param progressVarianceLabel   textual rendering of the progress-line variance (e.g.
  *                                {@code "3d late"}, {@code "on track"}), never colour-only (A11y),
  *                                or {@code null} if not applicable
+ * @param isCritical              engine-derived critical-path flag ({@code totalFloat <= 0});
+ *                                rolled up (any-child) for a summary; {@code null} if not yet
+ *                                scheduled
+ * @param totalSlackMinutes       engine-derived total float in worked minutes (own value);
+ *                                {@code null} for a summary (no rollup defined) or if not yet
+ *                                scheduled
+ * @param freeSlackMinutes        engine-derived free float in worked minutes (own value);
+ *                                {@code null} for a summary (no rollup defined) or if not yet
+ *                                scheduled
+ * @param criticalLabel           textual alternative to {@link #isCritical} (e.g.
+ *                                {@code "Critical"}), never colour-only (A11y); {@code null} iff
+ *                                {@link #isCritical} is
  * @param readOnly                whether the derived fields are read-only (always {@code true} for
  *                                a summary)
  * @param ariaRole                ARIA role for the tree widget ({@code "treeitem"})
@@ -85,6 +113,10 @@ public record WbsTaskResponse(
         BigDecimal expectedPercentComplete,
         boolean late,
         String progressVarianceLabel,
+        Boolean isCritical,
+        Integer totalSlackMinutes,
+        Integer freeSlackMinutes,
+        String criticalLabel,
         boolean readOnly,
         String ariaRole,
         int ariaLevel,
