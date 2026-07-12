@@ -112,9 +112,15 @@ public class WbsTaskService {
 
     /**
      * Creates a task in a project's WBS, optionally under an existing parent, and re-derives the
-     * WBS codes of the whole project via the engine. The new task is a {@code LEAF}; if it is
-     * created under a parent, that parent becomes a {@code SUMMARY} (a node with children is a
-     * summary — US22.4.1a).
+     * WBS codes of the whole project via the engine. If created under a parent, that parent becomes
+     * a {@code SUMMARY} (a node with children is a summary — US22.4.1a).
+     *
+     * <p><strong>Duration-0 auto-classification (US22.4.6 AC1).</strong> A task created with
+     * {@code durationMinutes=0} is a {@code MILESTONE}, not a {@code LEAF} — "given a task of
+     * duration 0, when it is created, then it displays as a milestone". A jalon stays modelled as a
+     * zero-duration {@code Task} on the shared temporal graph (EN22.1), never a separate entity,
+     * consistent with the roadmap-rapide milestone (US22.3.4). Any other duration (including
+     * {@code null}, meaning "not yet set") yields a plain {@code LEAF}.
      *
      * @param tenantId  the requesting tenant's {@code public.tenants.id}
      * @param teamId    the requesting team's {@code public.teams.id}
@@ -140,7 +146,9 @@ public class WbsTaskService {
                 ? request.position()
                 : nextPosition(tenantId, teamId, projectId, parentId);
 
-        final Task task = new Task(tenantId, teamId, projectId, position, request.name(), NodeKind.LEAF,
+        final NodeKind kind = request.durationMinutes() != null && request.durationMinutes() == 0
+                ? NodeKind.MILESTONE : NodeKind.LEAF;
+        final Task task = new Task(tenantId, teamId, projectId, position, request.name(), kind,
                 Boolean.FALSE, DEFAULT_PRECISION, INITIAL_REVISION);
         task.setParentTaskId(parentId);
         task.setDurationMinutes(request.durationMinutes());
@@ -522,7 +530,8 @@ public class WbsTaskService {
         return new WbsTaskResponse(t.getId(), t.getParentTaskId(), t.getWbsCode(), t.getName(),
                 t.getNodeKind(), t.getPosition() == null ? 0 : t.getPosition(), start, finish, duration,
                 percent, progressLabel, summary, WbsTaskResponse.ARIA_ROLE_TREEITEM, level, setSize,
-                posInSet, summary, t.getRevision() == null ? 0 : t.getRevision());
+                posInSet, summary, WbsTaskResponse.labelFor(t.getNodeKind()),
+                t.getRevision() == null ? 0 : t.getRevision());
     }
 
     // ---- shared guards --------------------------------------------------------------------------

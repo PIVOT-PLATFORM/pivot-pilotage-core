@@ -53,6 +53,11 @@ import org.springframework.web.bind.annotation.RestController;
  *   <li>{@code PUT   .../gantt/tasks/{taskId}/constraint} — set (create or replace) a task's
  *       constraint/deadline and re-run the CPM (US22.4.4, write, gated). A date-bearing type submitted
  *       without a {@code constraintDate} is rejected {@code 422}.</li>
+ *   <li>{@code POST   .../gantt/tasks/recurring} — create a periodic task series and materialise its
+ *       occurrences (US22.4.6, write, gated). A task created via {@code POST .../gantt/tasks} with
+ *       {@code durationMinutes=0} is auto-classified a milestone (US22.4.6 AC1) — no dedicated
+ *       endpoint, the existing create path already covers it. A missing/invalid frequency or
+ *       occurrence count is rejected {@code 422}.</li>
  * </ul>
  */
 @RestController
@@ -63,25 +68,28 @@ public class WbsTaskController {
     private final DependencyService dependencyService;
     private final TaskEffortService taskEffortService;
     private final TaskConstraintService taskConstraintService;
+    private final RecurringTaskService recurringTaskService;
     private final WbsEditPolicy editPolicy;
 
     /**
      * Constructs the controller.
      *
-     * @param wbsTaskService         the WBS business logic
-     * @param dependencyService      the typed-dependency business logic (US22.4.3)
-     * @param taskEffortService      the duration/effort/scheduling-mode business logic (US22.4.2)
-     * @param taskConstraintService  the constraint/deadline business logic (US22.4.4)
-     * @param editPolicy             the role-gate extension point for writes (deny-all until the
-     *                               starter publishes membership, mirrors {@code RoadmapEditPolicy})
+     * @param wbsTaskService        the WBS business logic
+     * @param dependencyService     the typed-dependency business logic (US22.4.3)
+     * @param taskEffortService     the duration/effort/scheduling-mode business logic (US22.4.2)
+     * @param taskConstraintService the constraint/deadline business logic (US22.4.4)
+     * @param recurringTaskService  the periodic-task series/occurrences business logic (US22.4.6)
+     * @param editPolicy            the role-gate extension point for writes (deny-all until the
+     *                              starter publishes membership, mirrors {@code RoadmapEditPolicy})
      */
     public WbsTaskController(final WbsTaskService wbsTaskService, final DependencyService dependencyService,
             final TaskEffortService taskEffortService, final TaskConstraintService taskConstraintService,
-            final WbsEditPolicy editPolicy) {
+            final RecurringTaskService recurringTaskService, final WbsEditPolicy editPolicy) {
         this.wbsTaskService = wbsTaskService;
         this.dependencyService = dependencyService;
         this.taskEffortService = taskEffortService;
         this.taskConstraintService = taskConstraintService;
+        this.recurringTaskService = recurringTaskService;
         this.editPolicy = editPolicy;
     }
 
@@ -355,6 +363,29 @@ public class WbsTaskController {
             @PathVariable final long taskId, @Valid @RequestBody final UpsertTaskConstraintRequest request) {
         requireEditAuthorized();
         return ResponseEntity.ok(taskConstraintService.upsert(tenantId, teamId, projectId, taskId, request));
+    }
+
+    /**
+     * Creates a periodic task series and materialises its occurrences (US22.4.6, write, gated). The
+     * occurrences respect the working calendar (US22.4.5) and, when {@code durationMinutes} is
+     * {@code 0}/absent, are rendered as milestones (the same auto-classification as
+     * {@link #createTask}).
+     *
+     * @param tenantId  the tenant's {@code public.tenants.id}
+     * @param teamId    the team's {@code public.teams.id}
+     * @param projectId the project id
+     * @param request   the creation payload
+     * @return {@code 201 Created} with the series and its generated occurrences; {@code 403} if
+     *         unauthorized; {@code 404} if the project or the parent is not visible; {@code 422} if
+     *         the frequency/occurrence count is missing or invalid, or exceeds the generation cap
+     */
+    @PostMapping("/tasks/recurring")
+    public ResponseEntity<RecurringTaskResponse> createRecurringTask(@PathVariable final long tenantId,
+            @PathVariable final long teamId, @PathVariable final long projectId,
+            @Valid @RequestBody final CreateRecurringTaskRequest request) {
+        requireEditAuthorized();
+        return ResponseEntity.status(HttpStatus.CREATED)
+                .body(recurringTaskService.createRecurringTask(tenantId, teamId, projectId, request));
     }
 
     /**

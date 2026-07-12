@@ -67,4 +67,17 @@
         <Class name="fr.pivot.pilotage.schedule.CalendarException"/>
     </Match>
 
+    <!--
+        EI_EXPOSE_REP2 sur RecurringTaskService (US22.4.6) : stocke un bean Spring singleton
+        constructeur-injecté (WbsTaskService, réutilisé pour rendre la série/les occurrences avec
+        leur code WBS/attributs ARIA dérivés — Étape 0, réutilisation) — état géré par le conteneur,
+        non mutable de l'extérieur ; en faire une copie défensive n'aurait aucun sens. Même décision
+        de conception que WbsTaskController/CalendarController ci-dessus, appliquée ici à un service
+        qui compose un autre service plutôt qu'un contrôleur.
+    -->
+    <Match>
+        <Bug pattern="EI_EXPOSE_REP,EI_EXPOSE_REP2"/>
+        <Class name="fr.pivot.pilotage.gantt.RecurringTaskService"/>
+    </Match>
+
 </FindBugsFilter>

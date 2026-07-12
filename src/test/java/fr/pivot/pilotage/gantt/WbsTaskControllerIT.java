@@ -91,6 +91,9 @@ class WbsTaskControllerIT {
     private TaskConstraintService taskConstraintService;
 
     @MockitoBean
+    private RecurringTaskService recurringTaskService;
+
+    @MockitoBean
     private WbsEditPolicy editPolicy;
 
     private MockMvc mockMvc;
@@ -103,7 +106,8 @@ class WbsTaskControllerIT {
 
     private static WbsTaskResponse sampleNode() {
         return new WbsTaskResponse(TASK, null, "1", "Design", NodeKind.LEAF, 0, null, null, null,
-                null, null, false, WbsTaskResponse.ARIA_ROLE_TREEITEM, 1, 1, 1, false, 0);
+                null, null, false, WbsTaskResponse.ARIA_ROLE_TREEITEM, 1, 1, 1, false,
+                WbsTaskResponse.labelFor(NodeKind.LEAF), 0);
     }
 
     // -------- read: tree --------------------------------------------------------------------------
@@ -622,5 +626,88 @@ class WbsTaskControllerIT {
 
         verify(taskConstraintService, never()).upsert(anyLong(), anyLong(), anyLong(), anyLong(),
                 any(UpsertTaskConstraintRequest.class));
+    }
+
+    // ============================ US22.4.6 — jalons & tâches périodiques =========================
+
+    private static RecurringTaskResponse recurringResponse() {
+        final WbsTaskResponse series = new WbsTaskResponse(TASK, null, "1", "Comité hebdo",
+                NodeKind.RECURRING, 0, null, null, null, null, null, false,
+                WbsTaskResponse.ARIA_ROLE_TREEITEM, 1, 1, 1, false,
+                WbsTaskResponse.labelFor(NodeKind.RECURRING), 0);
+        final WbsTaskResponse occurrence = new WbsTaskResponse(TASK + 1, TASK, "1.1", "Comité hebdo — occurrence 1/3",
+                NodeKind.MILESTONE, 0, null, null, null, null, null, false,
+                WbsTaskResponse.ARIA_ROLE_TREEITEM, 2, 1, 1, false,
+                WbsTaskResponse.labelFor(NodeKind.MILESTONE), 0);
+        return new RecurringTaskResponse(series, "FREQ=WEEKLY;INTERVAL=1;COUNT=3;DTSTART=2024-01-01",
+                List.of(occurrence));
+    }
+
+    // -------- create: gated write, delegates, 201 --------------------------------------------------
+
+    @Test
+    void createRecurringTask_authorized_returns201AndInvokesService() throws Exception {
+        when(editPolicy.isAuthorized()).thenReturn(true);
+        when(recurringTaskService.createRecurringTask(eq(TENANT), eq(TEAM), eq(PROJECT),
+                any(CreateRecurringTaskRequest.class))).thenReturn(recurringResponse());
+
+        mockMvc.perform(post(BASE + "/tasks/recurring")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"Comité hebdo\",\"firstOccurrenceDate\":\"2024-01-01\","
+                                + "\"frequency\":\"WEEKLY\",\"occurrenceCount\":3}"))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.series.taskId").value(TASK))
+                .andExpect(jsonPath("$.series.nodeKind").value("RECURRING"))
+                .andExpect(jsonPath("$.occurrences[0].nodeKind").value("MILESTONE"))
+                .andExpect(jsonPath("$.occurrences[0].nodeKindLabel").value("Milestone"));
+    }
+
+    // -------- Security AC: create write gated → 403, service never called --------------------------
+
+    @Test
+    void createRecurringTask_unauthorized_returns403_andServiceNeverCalled() throws Exception {
+        when(editPolicy.isAuthorized()).thenReturn(false);
+
+        mockMvc.perform(post(BASE + "/tasks/recurring")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"Comité hebdo\",\"firstOccurrenceDate\":\"2024-01-01\","
+                                + "\"frequency\":\"WEEKLY\",\"occurrenceCount\":3}"))
+                .andExpect(status().isForbidden());
+
+        verify(recurringTaskService, never()).createRecurringTask(anyLong(), anyLong(), anyLong(),
+                any(CreateRecurringTaskRequest.class));
+    }
+
+    // -------- Error AC: missing frequency/occurrence count → 422 with an explicit message ----------
+
+    @Test
+    void createRecurringTask_missingFrequency_returns422() throws Exception {
+        when(editPolicy.isAuthorized()).thenReturn(true);
+        when(recurringTaskService.createRecurringTask(eq(TENANT), eq(TEAM), eq(PROJECT),
+                any(CreateRecurringTaskRequest.class)))
+                .thenThrow(InvalidRecurrenceException.missingFrequencyOrOccurrenceCount());
+
+        mockMvc.perform(post(BASE + "/tasks/recurring")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"Comité hebdo\",\"firstOccurrenceDate\":\"2024-01-01\"}"))
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(jsonPath("$.code").value(InvalidRecurrenceException.CODE))
+                .andExpect(jsonPath("$.message").isNotEmpty());
+    }
+
+    // -------- Security AC: cross-tenant / unknown project → 404 non-disclosure ---------------------
+
+    @Test
+    void createRecurringTask_unknownProject_returns404() throws Exception {
+        when(editPolicy.isAuthorized()).thenReturn(true);
+        when(recurringTaskService.createRecurringTask(eq(TENANT), eq(TEAM), eq(PROJECT),
+                any(CreateRecurringTaskRequest.class)))
+                .thenThrow(new WbsProjectNotFoundException(PROJECT, TENANT, TEAM));
+
+        mockMvc.perform(post(BASE + "/tasks/recurring")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"Comité hebdo\",\"firstOccurrenceDate\":\"2024-01-01\","
+                                + "\"frequency\":\"WEEKLY\",\"occurrenceCount\":3}"))
+                .andExpect(status().isNotFound());
     }
 }
