@@ -47,6 +47,12 @@ import org.springframework.web.bind.annotation.RestController;
  *       work = duration × units (US22.4.2, write, gated). Non-positive units → {@code 422}.</li>
  *   <li>{@code PATCH  .../gantt/tasks/{taskId}/scheduling-mode} — toggle AUTO/MANUAL, exposing the
  *       manual variance (US22.4.2, write, gated).</li>
+ *   <li>{@code GET   .../gantt/tasks/{taskId}/constraint} — read a task's constraint/deadline and the
+ *       engine's current warnings about it (US22.4.4, read — not gated, only isolation-checked, so a
+ *       raised conflict stays visible to every role).</li>
+ *   <li>{@code PUT   .../gantt/tasks/{taskId}/constraint} — set (create or replace) a task's
+ *       constraint/deadline and re-run the CPM (US22.4.4, write, gated). A date-bearing type submitted
+ *       without a {@code constraintDate} is rejected {@code 422}.</li>
  * </ul>
  */
 @RestController
@@ -56,22 +62,26 @@ public class WbsTaskController {
     private final WbsTaskService wbsTaskService;
     private final DependencyService dependencyService;
     private final TaskEffortService taskEffortService;
+    private final TaskConstraintService taskConstraintService;
     private final WbsEditPolicy editPolicy;
 
     /**
      * Constructs the controller.
      *
-     * @param wbsTaskService    the WBS business logic
-     * @param dependencyService the typed-dependency business logic (US22.4.3)
-     * @param taskEffortService the duration/effort/scheduling-mode business logic (US22.4.2)
-     * @param editPolicy        the role-gate extension point for writes (deny-all until the starter
-     *                          publishes membership, mirrors {@code RoadmapEditPolicy})
+     * @param wbsTaskService         the WBS business logic
+     * @param dependencyService      the typed-dependency business logic (US22.4.3)
+     * @param taskEffortService      the duration/effort/scheduling-mode business logic (US22.4.2)
+     * @param taskConstraintService  the constraint/deadline business logic (US22.4.4)
+     * @param editPolicy             the role-gate extension point for writes (deny-all until the
+     *                               starter publishes membership, mirrors {@code RoadmapEditPolicy})
      */
     public WbsTaskController(final WbsTaskService wbsTaskService, final DependencyService dependencyService,
-            final TaskEffortService taskEffortService, final WbsEditPolicy editPolicy) {
+            final TaskEffortService taskEffortService, final TaskConstraintService taskConstraintService,
+            final WbsEditPolicy editPolicy) {
         this.wbsTaskService = wbsTaskService;
         this.dependencyService = dependencyService;
         this.taskEffortService = taskEffortService;
+        this.taskConstraintService = taskConstraintService;
         this.editPolicy = editPolicy;
     }
 
@@ -305,6 +315,46 @@ public class WbsTaskController {
         requireEditAuthorized();
         return ResponseEntity.ok(taskEffortService.setSchedulingMode(tenantId, teamId, projectId, taskId,
                 request.schedulingMode()));
+    }
+
+    /**
+     * Reads a task's constraint/deadline and the engine's current warnings about it (US22.4.4). Not
+     * gated by the edit policy — only by tenant/team/project/task isolation — so a conflict raised by
+     * an editor stays visible read-only to every other role (Security AC).
+     *
+     * @param tenantId  the tenant's {@code public.tenants.id}
+     * @param teamId    the team's {@code public.teams.id}
+     * @param projectId the project id
+     * @param taskId    the task to read
+     * @return {@code 200 OK} with the constraint/deadline and current warnings; {@code 404} if not
+     *         visible
+     */
+    @GetMapping("/tasks/{taskId}/constraint")
+    public ResponseEntity<TaskConstraintResponse> getConstraint(@PathVariable final long tenantId,
+            @PathVariable final long teamId, @PathVariable final long projectId,
+            @PathVariable final long taskId) {
+        return ResponseEntity.ok(taskConstraintService.get(tenantId, teamId, projectId, taskId));
+    }
+
+    /**
+     * Sets (creates or replaces) a task's constraint/deadline and re-runs the CPM (US22.4.4, write,
+     * gated).
+     *
+     * @param tenantId  the tenant's {@code public.tenants.id}
+     * @param teamId    the team's {@code public.teams.id}
+     * @param projectId the project id
+     * @param taskId    the task to constrain
+     * @param request   the constraint/deadline payload
+     * @return {@code 200 OK} with the persisted constraint/deadline and the fresh warnings for this
+     *         task; {@code 403} if unauthorized; {@code 404} if not visible; {@code 422} if the type
+     *         requires a date and none was supplied
+     */
+    @PutMapping("/tasks/{taskId}/constraint")
+    public ResponseEntity<TaskConstraintResponse> setConstraint(@PathVariable final long tenantId,
+            @PathVariable final long teamId, @PathVariable final long projectId,
+            @PathVariable final long taskId, @Valid @RequestBody final UpsertTaskConstraintRequest request) {
+        requireEditAuthorized();
+        return ResponseEntity.ok(taskConstraintService.upsert(tenantId, teamId, projectId, taskId, request));
     }
 
     /**

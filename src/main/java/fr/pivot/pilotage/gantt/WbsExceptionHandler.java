@@ -168,6 +168,19 @@ class WbsExceptionHandler {
     }
 
     /**
+     * Maps a constraint missing its required date (US22.4.4 error AC) to {@code 422 Unprocessable
+     * Entity} with an explicit message; the previous constraint (if any) is left untouched.
+     *
+     * @param ex the thrown exception
+     * @return a 422 response carrying a {@link WbsApiError} body
+     */
+    @ExceptionHandler(InvalidTaskConstraintException.class)
+    ResponseEntity<WbsApiError> handleInvalidConstraint(final InvalidTaskConstraintException ex) {
+        return ResponseEntity.unprocessableEntity()
+                .body(new WbsApiError(InvalidTaskConstraintException.CODE, ex.getMessage()));
+    }
+
+    /**
      * Maps an unreadable request body to the right status. A body carrying a server-derived property
      * (the WBS code or any engine-computed field — rejected because {@code fail-on-unknown-properties}
      * is on) is a client attempt to write a read-only field: that maps to {@code 422} (US22.4.1a /
