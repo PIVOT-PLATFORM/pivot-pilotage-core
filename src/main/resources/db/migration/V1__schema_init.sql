@@ -569,3 +569,89 @@ CREATE TABLE IF NOT EXISTS pilotage.roadmap_share_link (
 CREATE INDEX IF NOT EXISTS idx_roadmap_share_link_tenant_id  ON pilotage.roadmap_share_link(tenant_id);
 CREATE INDEX IF NOT EXISTS idx_roadmap_share_link_team_id    ON pilotage.roadmap_share_link(team_id);
 CREATE INDEX IF NOT EXISTS idx_roadmap_share_link_project_id ON pilotage.roadmap_share_link(project_id);
+
+-- =====================================================================================
+-- US23.2.2 — Tableaux de bord personnalisables (E23 Portefeuille, F23.2 portefeuille-comites).
+--
+-- Deux tables : dashboard_config (1 par utilisateur, dans les bornes tenant/team) et
+-- dashboard_widget (0..N par dashboard, ON DELETE CASCADE).
+--
+-- user_id SANS FK (decision documentee dans DashboardConfig.java) : pivot-pilotage-core/CLAUDE.md
+-- restreint les FK cross-schema a UNIQUEMENT public.tenants(id)/public.teams(id) -- jamais
+-- public.users(id). Meme principe de "reference logique, pas de FK inter-module" deja utilise par
+-- pilotage.assignment.resource_ref (identite resolue ailleurs, jamais jointe). user_id reste un
+-- simple BIGINT, palliatif d'ere-gap pour l'identite de l'appelant (cf. DashboardController).
+--
+-- UNIQUE (tenant_id, team_id, user_id) : contrairement a pilotage.organization_profile (UNIQUE
+-- tenant_id seul, team_id attribution seule -- raison historique documentee plus haut dans ce
+-- fichier, contrat fige EN22.1c/E22/E03), cette table est nouvelle et suit au contraire la
+-- convention dominante du fichier (tenant_id ET team_id comme dimensions de resolution reelles,
+-- comme project/task/lane/...) -- un utilisateur peut avoir un dashboard distinct par equipe.
+--
+-- profile VARCHAR(64) NOT NULL, libelle libre (pas d'enum) : AC1 lit le "profil" comme une entree
+-- EXTERNE (persona/role de l'appelant, a terme fournie par TenantContext, cf. CLAUDE.md §gap) --
+-- ce module ne possede ni n'invente de taxonomie fermee (frontmatter backlog "Profils: Tous"),
+-- meme principe que pilotage.lane.name ("aucune taxonomie figee cote schema").
+--
+-- dashboard_widget.application_id NOT NULL REFERENCES pilotage.application(id) ON DELETE CASCADE :
+-- tous les types de widget definis a ce jour (DashboardWidgetType) sont scopes a une Application
+-- (EN18.9). Un widget non scope necessiterait de relacher cette colonne -- pas fait par
+-- anticipation, aucun type de widget actuel n'en a besoin (meme posture que "pas de suppression de
+-- lane implementee avant qu'une US le demande").
+--
+-- Bornes de grille (4 colonnes) : CHECK grid_column 0..3, grid_width/grid_height 1..4,
+-- grid_column + grid_width <= 4 -- defense-in-depth, la validation porteuse du message
+-- utilisateur (AC erreur "disposition hors bornes") vit dans DashboardService, jamais relayee
+-- depuis une violation SQL brute (meme principe que l'acyclicite de pilotage.task_dependency,
+-- verifiee cote moteur/service, pas en DDL).
+--
+-- widget_type valide par CHECK IN (...) : contrairement a lane.name, un type de widget inconnu
+-- doit etre rejete explicitement (AC erreur "widget inconnu") -- catalogue ferme, pas un libelle.
+--
+-- tenant_id/team_id dupliques sur dashboard_widget, meme principe de duplication deliberee que
+-- toutes les autres tables pilotage.* de ce fichier (filtrage direct sans jointure systematique).
+-- =====================================================================================
+CREATE TABLE IF NOT EXISTS pilotage.dashboard_config (
+    id          BIGINT      GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    tenant_id   BIGINT      NOT NULL REFERENCES public.tenants(id),
+    team_id     BIGINT      NOT NULL REFERENCES public.teams(id),
+    user_id     BIGINT      NOT NULL,
+    profile     VARCHAR(64) NOT NULL,
+    view_mode   VARCHAR(16) NOT NULL,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT uq_dashboard_config_tenant_team_user UNIQUE (tenant_id, team_id, user_id),
+    CONSTRAINT chk_dashboard_config_view_mode CHECK (view_mode IN ('SYNTHETIC', 'DETAILED')),
+    CONSTRAINT chk_dashboard_config_profile_not_blank CHECK (btrim(profile) <> '')
+);
+CREATE INDEX IF NOT EXISTS idx_dashboard_config_tenant_id ON pilotage.dashboard_config(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_dashboard_config_team_id   ON pilotage.dashboard_config(team_id);
+CREATE INDEX IF NOT EXISTS idx_dashboard_config_user_id   ON pilotage.dashboard_config(user_id);
+
+CREATE TABLE IF NOT EXISTS pilotage.dashboard_widget (
+    id                  BIGINT      GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    tenant_id           BIGINT      NOT NULL REFERENCES public.tenants(id),
+    team_id             BIGINT      NOT NULL REFERENCES public.teams(id),
+    dashboard_config_id BIGINT      NOT NULL REFERENCES pilotage.dashboard_config(id) ON DELETE CASCADE,
+    application_id      BIGINT      NOT NULL REFERENCES pilotage.application(id) ON DELETE CASCADE,
+    widget_type         VARCHAR(32) NOT NULL,
+    position            INT         NOT NULL,
+    grid_row            INT         NOT NULL,
+    grid_column         INT         NOT NULL,
+    grid_width          INT         NOT NULL DEFAULT 1,
+    grid_height         INT         NOT NULL DEFAULT 1,
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT chk_dashboard_widget_type
+        CHECK (widget_type IN ('PORTFOLIO_STATUS_SUMMARY', 'WEATHER_ALERTS', 'STRATEGIC_MILESTONES')),
+    CONSTRAINT chk_dashboard_widget_position CHECK (position >= 0),
+    CONSTRAINT chk_dashboard_widget_grid_row CHECK (grid_row >= 0),
+    CONSTRAINT chk_dashboard_widget_grid_column CHECK (grid_column BETWEEN 0 AND 3),
+    CONSTRAINT chk_dashboard_widget_grid_width CHECK (grid_width BETWEEN 1 AND 4),
+    CONSTRAINT chk_dashboard_widget_grid_height CHECK (grid_height BETWEEN 1 AND 4),
+    CONSTRAINT chk_dashboard_widget_grid_column_bounds CHECK (grid_column + grid_width <= 4)
+);
+CREATE INDEX IF NOT EXISTS idx_dashboard_widget_tenant_id      ON pilotage.dashboard_widget(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_dashboard_widget_team_id        ON pilotage.dashboard_widget(team_id);
+CREATE INDEX IF NOT EXISTS idx_dashboard_widget_config_id      ON pilotage.dashboard_widget(dashboard_config_id);
+CREATE INDEX IF NOT EXISTS idx_dashboard_widget_application_id ON pilotage.dashboard_widget(application_id);
