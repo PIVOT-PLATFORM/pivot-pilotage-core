@@ -40,7 +40,10 @@ import java.util.Map;
  * <p><strong>AUTO vs MANUAL.</strong> AUTO tasks are recomputed. MANUAL tasks keep their pinned
  * dates; the engine still computes the theoretical AUTO date and emits a {@link ManualVariance}. A
  * hard dependency is never broken: a constraint that would fight it is dropped and a
- * {@link SchedulingWarning} of type {@code CONSTRAINT_CONFLICT} is emitted.
+ * {@link SchedulingWarning} of type {@code CONSTRAINT_CONFLICT} is emitted (US22.4.4) — detected by
+ * comparing the constraint's own, unmerged target against the dependency floor <em>before</em> the two
+ * are combined, since the combined value is by construction never earlier than the dependency floor
+ * and so cannot itself be the signal.
  *
  * <p><strong>Rejections.</strong> A dependency cycle raises {@link ScheduleErrorCode#SCHEDULE_CYCLE}
  * with no partial state; a multi-tenant input raises {@link ScheduleErrorCode#TENANT_VIOLATION}; an
@@ -316,13 +319,23 @@ public final class ScheduleEngine {
             }
             final Instant depFloor = start;
 
-            // 2. forward constraints (SNET/FNET/MSO/MFO) push start no earlier
-            Instant constrained = applyForwardConstraint(t, cal, start, duration);
-            if (constrained.isBefore(depFloor)) {
-                // constraint would move the task before its hard predecessor → honour dependency
-                warnings.add(new SchedulingWarning(SchedulingWarning.WarningType.CONSTRAINT_CONFLICT,
-                        id, "constraint " + t.constraintKind() + " precedes a hard dependency; dependency honoured"));
-                constrained = depFloor;
+            // 2. forward constraints (SNET/FNET/MSO/MFO) push start no earlier than the constraint's
+            // own target (US22.4.4). The raw target is compared against depFloor *before* merging the
+            // two floors: laterOf(depFloor, target) can never itself be < depFloor (max() is bounded
+            // below by depFloor by construction), so that post-merge value must never be the signal —
+            // only the constraint's own, unmerged target reveals whether the hard dependency overrode it.
+            final Instant constraintFloor = forwardConstraintFloor(t, cal, duration);
+            Instant constrained = depFloor;
+            if (constraintFloor != null) {
+                if (constraintFloor.isBefore(depFloor)) {
+                    // the constraint's own target predates the hard predecessor → dependency honoured,
+                    // the constraint is silently overridden nowhere else — surfaced here explicitly.
+                    warnings.add(new SchedulingWarning(SchedulingWarning.WarningType.CONSTRAINT_CONFLICT,
+                            id, "constraint " + t.constraintKind() + " target " + constraintFloor
+                                    + " precedes hard dependency floor " + depFloor + "; dependency honoured"));
+                } else {
+                    constrained = constraintFloor;
+                }
             }
             start = constrained;
 
@@ -376,20 +389,20 @@ public final class ScheduleEngine {
         return lag > 0 ? cal.advance(base, lag) : cal.retreat(base, -lag);
     }
 
-    private Instant applyForwardConstraint(final TaskNode t, final WorkingCalendar cal,
-            final Instant start, final long duration) {
+    /**
+     * The raw start floor a forward constraint (SNET/MSO/FNET/MFO) targets on its own, independent of
+     * any dependency — i.e. <em>before</em> merging with {@code depFloor}. Returns {@code null} when
+     * the constraint kind does not push the forward floor at all (no kind, ASAP, ALAP, SNLT, FNLT).
+     */
+    private Instant forwardConstraintFloor(final TaskNode t, final WorkingCalendar cal, final long duration) {
         if (t.constraintKind() == null) {
-            return start;
+            return null;
         }
         return switch (t.constraintKind()) {
-            case SNET, MSO -> laterOf(start, cal.snapForward(t.constraintDate()));
-            case FNET, MFO -> laterOf(start, cal.retreat(cal.snapForward(t.constraintDate()), duration));
-            default -> start; // ASAP/ALAP/SNLT/FNLT do not push the forward floor
+            case SNET, MSO -> cal.snapForward(t.constraintDate());
+            case FNET, MFO -> cal.retreat(cal.snapForward(t.constraintDate()), duration);
+            default -> null; // ASAP/ALAP/SNLT/FNLT do not push the forward floor
         };
-    }
-
-    private Instant laterOf(final Instant a, final Instant b) {
-        return a.isAfter(b) ? a : b;
     }
 
     // ------------------------------------------------------------------ backward pass ----------
