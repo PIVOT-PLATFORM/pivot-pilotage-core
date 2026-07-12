@@ -333,6 +333,56 @@ class WbsTaskServiceIT {
         wbsTaskService.assertDerivedFieldEditable(tenantId, teamId, projectId, leaf.taskId(), "startDate");
     }
 
+    // -------- US22.4.8 AC: a task behind schedule at the project's status date is marked late -------
+
+    @Test
+    void progressLine_marksLateTaskAgainstProjectStatusDate() {
+        final WbsTaskResponse leaf = create("A", null);
+        final Instant start = LocalDate.of(2026, 1, 1).atStartOfDay(ZoneOffset.UTC).toInstant();
+        final Instant finish = LocalDate.of(2026, 1, 21).atStartOfDay(ZoneOffset.UTC).toInstant(); // 20-day span
+        setDates(leaf.taskId(), start, finish);
+        setProgress(leaf.taskId(), new BigDecimal("10.00"));
+        setProjectStatusDate(LocalDate.of(2026, 1, 11)); // 10 days elapsed ⇒ expected 50%
+
+        final WbsTaskResponse node = node(leaf.taskId());
+        assertThat(node.late()).isTrue();
+        assertThat(node.expectedPercentComplete()).isEqualByComparingTo("50");
+        assertThat(node.progressVarianceLabel()).isEqualTo("8d late");
+    }
+
+    // -------- US22.4.8 AC: a task on/ahead of schedule at the status date is not late ---------------
+
+    @Test
+    void progressLine_onOrAheadOfSchedule_isNotLate() {
+        final WbsTaskResponse leaf = create("A", null);
+        final Instant start = LocalDate.of(2026, 1, 1).atStartOfDay(ZoneOffset.UTC).toInstant();
+        final Instant finish = LocalDate.of(2026, 1, 21).atStartOfDay(ZoneOffset.UTC).toInstant();
+        setDates(leaf.taskId(), start, finish);
+        setProgress(leaf.taskId(), new BigDecimal("80.00"));
+        setProjectStatusDate(LocalDate.of(2026, 1, 11)); // expected 50%, actual 80% ⇒ ahead
+
+        final WbsTaskResponse node = node(leaf.taskId());
+        assertThat(node.late()).isFalse();
+        assertThat(node.progressVarianceLabel()).isEqualTo("on track");
+    }
+
+    // -------- US22.4.8 AC: no project status date yet ⇒ progress line not applicable ----------------
+
+    @Test
+    void progressLine_notApplicableWithoutProjectStatusDate() {
+        final WbsTaskResponse leaf = create("A", null);
+        final Instant start = LocalDate.of(2026, 1, 1).atStartOfDay(ZoneOffset.UTC).toInstant();
+        final Instant finish = LocalDate.of(2026, 1, 21).atStartOfDay(ZoneOffset.UTC).toInstant();
+        setDates(leaf.taskId(), start, finish);
+        setProgress(leaf.taskId(), new BigDecimal("10.00"));
+        // project.statusDate left null (default)
+
+        final WbsTaskResponse node = node(leaf.taskId());
+        assertThat(node.late()).isFalse();
+        assertThat(node.expectedPercentComplete()).isNull();
+        assertThat(node.progressVarianceLabel()).isNull();
+    }
+
     // -------- Security AC: cross-tenant / cross-team isolation (404-equivalent) --------------------
 
     @Test
@@ -366,5 +416,11 @@ class WbsTaskServiceIT {
 
     private void setProgress(final long taskId, final BigDecimal percent) {
         progressRepository.save(new TaskProgress(tenantId, teamId, taskId, percent));
+    }
+
+    private void setProjectStatusDate(final LocalDate statusDate) {
+        final Project project = projectRepository.findById(projectId).orElseThrow();
+        project.setStatusDate(statusDate);
+        projectRepository.save(project);
     }
 }

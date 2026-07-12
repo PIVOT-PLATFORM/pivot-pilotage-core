@@ -10,7 +10,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * Pure-POJO unit tests for the EN22.1a {@code schedule} entities (Calendar, CalendarException,
- * Task, Phase, TaskDependency, TaskConstraint, Assignment, TaskProgress) and their enums.
+ * Task, Phase, TaskDependency, TaskConstraint, Assignment, TaskProgress, and the US22.4.8
+ * {@code TaskProgressHistory} audit entry) and their enums.
  *
  * <p>Each test exercises the constructors, getters, setters and lifecycle callbacks
  * ({@code @PrePersist}/{@code @PreUpdate}) without a Spring context or a database, covering the
@@ -329,5 +330,30 @@ class SchedulePojoTest {
         p.preUpdate();
         assertThat(p.getCreatedAt()).isNotNull();
         assertThat(p.getUpdatedAt()).isNotNull();
+    }
+
+    @Test
+    void taskProgressHistoryConstructorAllAccessorsAndCallbacks() {
+        final TaskProgressHistory h = new TaskProgressHistory(TENANT_ID, TEAM_ID, 1L, "user:alice",
+                new BigDecimal("45.00"), new BigDecimal("40.00"), NOW, NOW.plusSeconds(3600), DAY);
+
+        assertThat(h.getId()).isNull();
+        assertThat(h.getTenantId()).isEqualTo(TENANT_ID);
+        assertThat(h.getTeamId()).isEqualTo(TEAM_ID);
+        assertThat(h.getTaskId()).isEqualTo(1L);
+        assertThat(h.getActorRef()).isEqualTo("user:alice");
+        assertThat(h.getPercentComplete()).isEqualByComparingTo("45.00");
+        assertThat(h.getPhysicalPercentComplete()).isEqualByComparingTo("40.00");
+        assertThat(h.getActualStart()).isEqualTo(NOW);
+        assertThat(h.getActualFinish()).isEqualTo(NOW.plusSeconds(3600));
+        assertThat(h.getStatusDate()).isEqualTo(DAY);
+        assertThat(h.getRecordedAt()).isNull();
+
+        h.prePersist();
+        assertThat(h.getRecordedAt()).isNotNull();
+        // second prePersist keeps the already-set timestamp (never updated after insert)
+        final Instant firstRecorded = h.getRecordedAt();
+        h.prePersist();
+        assertThat(h.getRecordedAt()).isEqualTo(firstRecorded);
     }
 }
