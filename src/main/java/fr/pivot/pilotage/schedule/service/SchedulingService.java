@@ -51,6 +51,10 @@ import org.springframework.transaction.annotation.Transactional;
  * tenant simply resolves to no tasks (the caller-facing 404 mapping lives at the controller layer,
  * out of EN22.1b scope). The standard business calendar (Mon-Fri, 09:00-17:00) is the fallback when
  * a project carries no calendar rows.
+ *
+ * <p>{@link #previewSchedule(long, long)} (US22.4.4) reuses the same {@link #buildInput(long, long)}
+ * mapping but skips {@link #persistDerived(long, long, ScheduleResult)} — a pure read that never
+ * mutates the stored schedule.
  */
 @Service
 public class SchedulingService {
@@ -108,6 +112,22 @@ public class SchedulingService {
         final ScheduleResult result = engine.schedule(input);
         persistDerived(projectId, tenantId, result);
         return result;
+    }
+
+    /**
+     * Runs the CPM from the persisted graph <strong>without persisting</strong> the derived columns
+     * (US22.4.4) — used by read-only endpoints (e.g. the constraint/deadline conflict view) that need
+     * the engine's <em>current</em> warnings without side-effecting the stored schedule on a mere
+     * {@code GET}. Computed, never stored twice, same posture as the summary rollups (EN22.1c).
+     *
+     * @param projectId the project id
+     * @param tenantId  the owning tenant id (isolation boundary)
+     * @return the CPM result, transient (not persisted)
+     * @throws ScheduleException on cycle / tenant violation / unknown calendar
+     */
+    @Transactional(readOnly = true)
+    public ScheduleResult previewSchedule(final long projectId, final long tenantId) {
+        return engine.schedule(buildInput(projectId, tenantId));
     }
 
     /**
