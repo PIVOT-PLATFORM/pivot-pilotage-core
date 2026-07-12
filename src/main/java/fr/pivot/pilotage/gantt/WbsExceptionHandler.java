@@ -26,7 +26,8 @@ class WbsExceptionHandler {
      */
     private static final Set<String> DERIVED_FIELDS = Set.of(
             "wbsCode", "earlyStart", "earlyFinish", "lateStart", "lateFinish",
-            "totalSlackMinutes", "freeSlackMinutes", "isCritical", "critical", "workMinutes");
+            "totalSlackMinutes", "freeSlackMinutes", "isCritical", "critical", "workMinutes",
+            "actualWorkMinutes", "remainingWorkMinutes");
 
     /**
      * Maps an unresolved project (unknown tenant/team/project, or cross-tenant/team) to a bodyless
@@ -192,6 +193,20 @@ class WbsExceptionHandler {
     ResponseEntity<WbsApiError> handleInvalidRecurrence(final InvalidRecurrenceException ex) {
         return ResponseEntity.unprocessableEntity()
                 .body(new WbsApiError(InvalidRecurrenceException.CODE, ex.getMessage()));
+    }
+
+    /**
+     * Maps a rejected progress value (US22.4.8 error AC — percent out of {@code [0, 100]}, or an
+     * actual finish preceding the actual start) to {@code 422 Unprocessable Entity} with an explicit
+     * message; the task's progress keeps its previous values.
+     *
+     * @param ex the thrown exception
+     * @return a 422 response carrying a {@link WbsApiError} body
+     */
+    @ExceptionHandler(InvalidTaskProgressException.class)
+    ResponseEntity<WbsApiError> handleInvalidProgress(final InvalidTaskProgressException ex) {
+        return ResponseEntity.unprocessableEntity()
+                .body(new WbsApiError(InvalidTaskProgressException.CODE, ex.getMessage()));
     }
 
     /**
