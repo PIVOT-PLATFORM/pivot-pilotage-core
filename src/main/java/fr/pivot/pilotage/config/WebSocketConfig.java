@@ -67,6 +67,7 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
      */
     static final String DOMAIN_TOPIC_PREFIX = "/topic/pilotage.";
 
+    private final boolean relayEnabled;
     private final String relayHost;
     private final int relayPort;
     private final String allowedOrigins;
@@ -74,14 +75,21 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
     /**
      * Creates the configuration with the shared broker's connection coordinates.
      *
+     * @param relayEnabled   whether to relay to the external ActiveMQ broker (default {@code
+     *                       true}). Set {@code false} — as {@code application-test.yml} and the
+     *                       managed-min Cloud Run stack do — to fall back to an in-process
+     *                       {@code SimpleBroker} when no ActiveMQ is deployed (nothing publishes
+     *                       cross-module events yet, so the relay is not required to function).
      * @param relayHost      hostname of the shared ActiveMQ broker (STOMP transport)
      * @param relayPort      STOMP port of the shared ActiveMQ broker
      * @param allowedOrigins CORS-allowed origins for the WebSocket handshake
      */
     public WebSocketConfig(
+            @Value("${pivot.activemq.relay-enabled:true}") final boolean relayEnabled,
             @Value("${pivot.activemq.relay-host}") final String relayHost,
             @Value("${pivot.activemq.relay-port}") final int relayPort,
             @Value("${pivot.cors.allowed-origins}") final String allowedOrigins) {
+        this.relayEnabled = relayEnabled;
         this.relayHost = relayHost;
         this.relayPort = relayPort;
         this.allowedOrigins = allowedOrigins;
@@ -95,11 +103,18 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
      */
     @Override
     public void configureMessageBroker(final MessageBrokerRegistry registry) {
-        registry.enableStompBrokerRelay(DOMAIN_TOPIC_PREFIX)
-                .setRelayHost(relayHost)
-                .setRelayPort(relayPort)
-                .setSystemHeartbeatSendInterval(10000)
-                .setSystemHeartbeatReceiveInterval(10000);
+        if (relayEnabled) {
+            registry.enableStompBrokerRelay(DOMAIN_TOPIC_PREFIX)
+                    .setRelayHost(relayHost)
+                    .setRelayPort(relayPort)
+                    .setSystemHeartbeatSendInterval(10000)
+                    .setSystemHeartbeatReceiveInterval(10000);
+        } else {
+            // No external broker deployed (e.g. managed-min Cloud Run / tests): keep the same
+            // domain-scoped prefix on an in-process SimpleBroker so /topic/pilotage.* still works
+            // (single instance — nothing publishes cross-module events yet).
+            registry.enableSimpleBroker(DOMAIN_TOPIC_PREFIX);
+        }
         registry.setApplicationDestinationPrefixes("/app/pilotage");
     }
 

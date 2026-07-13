@@ -71,6 +71,10 @@ pivot:
     # EN07.3 — shared ActiveMQ broker (KahaDB persistence, DLQ.pilotage), owned/configured by
     # pivot-core. Default host/port match its Docker Compose service (dev + prod) — see
     # WebSocketConfig for the relay itself.
+    # EN07.3 relay to the shared ActiveMQ broker. Default true (dev/compose). Set false to fall
+    # back to an in-process SimpleBroker when no ActiveMQ is deployed — the managed-min Cloud Run
+    # stack passes PIVOT_ACTIVEMQ_RELAY_ENABLED=false (no broker VM). See WebSocketConfig.
+    relay-enabled: ${PIVOT_ACTIVEMQ_RELAY_ENABLED:true}
     relay-host: ${PIVOT_ACTIVEMQ_RELAY_HOST:activemq}
     relay-port: ${PIVOT_ACTIVEMQ_RELAY_PORT:61613}
   cors:
