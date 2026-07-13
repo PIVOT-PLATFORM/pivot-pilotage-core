@@ -244,6 +244,57 @@ jobs:
         run: npx semantic-release
 
   # -----------------------------------------
+  # 2b. PUSH ARTIFACT REGISTRY (managed-min) — mêmes bits que le release GHCR, re-taggués
+  #     vers Artifact Registry pour le déploiement Cloud Run ; id-token isolé ici pour que
+  #     la posture SLSA du job `release` (aucun id-token) reste inchangée.
+  # -----------------------------------------
+  push-ar:
+    name: Push image to Artifact Registry (managed-min)
+    runs-on: ubuntu-latest
+    needs: [prepare, release]
+    if: needs.prepare.outputs.version != ''
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
+      packages: read
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+      IMAGE: ${{ needs.release.outputs.image }}
+      DIGEST: ${{ needs.release.outputs.digest }}
+    steps:
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Authenticate to GCP (keyless / WIF)
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
+        with:
+          workload_identity_provider: ${{ vars.WIF_PROVIDER }}
+          service_account: ${{ vars.DEPLOYER_SA }}
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3.0.1
+
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker "${{ vars.AR_HOST }}" --quiet
+
+      - name: Pull released image, re-tag & push to Artifact Registry
+        run: |
+          if [ -n "${DIGEST}" ]; then
+            SRC="${IMAGE}@${DIGEST}"
+          else
+            SRC="${IMAGE}:${VERSION}"
+          fi
+          echo "Source (GHCR) : ${SRC}"
+          docker pull "${SRC}"
+          docker tag "${SRC}" "${{ vars.AR_IMAGE }}:${VERSION}"
+          docker push "${{ vars.AR_IMAGE }}:${VERSION}"
+
+  # -----------------------------------------
   # 3. PROVENANCE JAR — génère et signe la provenance SLSA L3 pour le JAR Maven.
   #    id-token: write est ici, pas dans `release` → le build ne peut pas forger sa
   #    propre provenance (différence clé L2 → L3).
